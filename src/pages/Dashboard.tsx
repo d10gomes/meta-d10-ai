@@ -1,7 +1,9 @@
-import { DollarSign, Users, MousePointerClick, TrendingUp, Building2, Zap } from 'lucide-react'
+import { useState, useEffect } from 'react'
+import { DollarSign, Users, TrendingUp, Zap, Play, Pause, Database, Cloud } from 'lucide-react'
 import { AreaChart, Area, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, PieChart, Pie, Cell } from 'recharts'
 import MetricCard from '../components/MetricCard'
 import { useApp } from '../contexts/AppContext'
+import { engine } from '../agents/engine'
 
 const weeklyData = [
   { dia: 'Seg', investido: 1250, retorno: 5250, leads: 82 },
@@ -23,12 +25,58 @@ const objectiveData = [
 ]
 
 export default function Dashboard() {
-  const { companies, totalBudget, totalLeads, totalROAS, activeAgents, actions } = useApp()
+  const { companies, totalBudget, totalLeads, totalROAS, activeAgents, actions, dataSource, loading } = useApp()
+  const [engineRunning, setEngineRunning] = useState(false)
+
+  const toggleEngine = async () => {
+    if (engineRunning) {
+      engine.stop()
+      setEngineRunning(false)
+    } else {
+      await engine.start()
+      setEngineRunning(true)
+    }
+  }
+
+  useEffect(() => {
+    return () => { engine.stop() }
+  }, [])
 
   const recentActions = actions.slice(-5).reverse()
 
   return (
     <div className="space-y-6">
+      <div className="flex items-center justify-between p-4 bg-white rounded-2xl shadow-sm border border-gray-100">
+        <div className="flex items-center gap-4">
+          <div className={`w-3 h-3 rounded-full ${engineRunning ? 'bg-green-500 animate-pulse' : 'bg-gray-300'}`} />
+          <div>
+            <p className="text-sm font-semibold text-gray-900">
+              Motor de Agentes {engineRunning ? 'Ativo' : 'Pausado'}
+            </p>
+            <p className="text-xs text-gray-500">
+              {engineRunning ? 'Monitorando campanhas a cada 5 minutos' : 'Clique para ativar a orquestra de agentes'}
+            </p>
+          </div>
+        </div>
+        <div className="flex items-center gap-3">
+          <div className={`flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-medium ${dataSource === 'supabase' ? 'bg-green-100 text-green-700' : 'bg-yellow-100 text-yellow-700'}`}>
+            {dataSource === 'supabase' ? <Cloud size={12} /> : <Database size={12} />}
+            {dataSource === 'supabase' ? 'Supabase' : 'Demo'}
+          </div>
+          <button
+            onClick={toggleEngine}
+            disabled={loading}
+            className={`flex items-center gap-2 px-4 py-2 rounded-xl text-sm font-medium transition-colors ${
+              engineRunning
+                ? 'bg-red-50 text-red-600 hover:bg-red-100'
+                : 'bg-blue-600 text-white hover:bg-blue-700'
+            }`}
+          >
+            {engineRunning ? <><Pause size={16} /> Pausar</> : <><Play size={16} /> Ativar Orquestra</>}
+          </button>
+        </div>
+      </div>
+
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
         <MetricCard title="Investido no Mes" value={`R$ ${totalBudget.toLocaleString('pt-BR')}`} change={12} icon={DollarSign} color="bg-blue-500" />
         <MetricCard title="Leads Gerados" value={totalLeads.toLocaleString('pt-BR')} change={24} icon={Users} color="bg-green-500" />

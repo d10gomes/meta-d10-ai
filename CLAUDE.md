@@ -37,9 +37,12 @@ src/
     company.ts            — tipos empresa, metas, roles dos agentes
     agent.ts              — tipos mensagens, acoes, memoria dos agentes
   agents/
-    communication.ts      — hub de comunicacao entre agentes
+    communication.ts      — hub de comunicacao entre agentes (pub/sub)
+    engine.ts             — motor autonomo dos agentes (ciclos de 5min)
   lib/
     supabase.ts           — client Supabase
+    supabase-data.ts      — camada de dados (CRUD companies, campaigns, agents, messages, actions, memories, meta_config)
+    meta-api.ts           — integracao real com Meta Marketing API v21.0 (campaigns, adsets, ads, insights, audiences, sync)
     mock-data.ts          — dados demo (3 empresas, campanhas, agentes)
   components/
     Sidebar.tsx            — menu lateral com navegacao
@@ -80,6 +83,18 @@ ID: kqdyowpmjsdxttxbcxoz
 - `agent_messages` — comunicacao entre agentes
 - `agent_memories` — memoria coletiva (aprendizados)
 - `automation_rules` — regras automaticas
+- `meta_config` — credenciais Meta API por empresa (app_id, access_token, ad_account_id, pixel_id, page_id, whatsapp_business_id)
+
+## Arquitetura do Motor de Agentes
+- O motor roda em ciclos de 5 minutos (configuravel)
+- Para cada empresa ativa com Meta API conectada:
+  1. Busca campanhas ativas com metricas dos ultimos 7 dias
+  2. Avalia regras de automacao habilitadas
+  3. Executa acoes na Meta API real (pausar, ativar, ajustar budget, escalar)
+  4. Roda checks automaticos (CTR baixo, frequencia alta, oportunidade de escalar, CPA alto)
+  5. Registra acoes e comunica via hub de agentes
+- Sync Meta -> Supabase: puxa campanhas e metricas da API e salva no banco
+- Fallback para dados mock quando Supabase nao tem dados
 
 ## Objetivos do Meta Ads Cobertos
 | Objetivo | Agente | KPIs |
