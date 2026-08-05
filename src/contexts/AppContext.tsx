@@ -1,7 +1,8 @@
-import { createContext, useContext, useState, type ReactNode } from 'react'
+import { createContext, useContext, useState, useEffect, useCallback, type ReactNode } from 'react'
 import type { Company } from '../types/company'
 import type { AgentMessage, AgentAction } from '../types/agent'
 import { mockCompanies, mockMessages, mockActions } from '../lib/mock-data'
+import * as db from '../lib/supabase-data'
 
 interface AppContextType {
   companies: Company[]
@@ -18,6 +19,10 @@ interface AppContextType {
   totalLeads: number
   totalROAS: number
   activeAgents: number
+  loading: boolean
+  error: string | null
+  refresh: () => Promise<void>
+  dataSource: 'supabase' | 'mock'
 }
 
 const AppContext = createContext<AppContextType | null>(null)
@@ -26,15 +31,54 @@ export function AppProvider({ children }: { children: ReactNode }) {
   const [companies, setCompanies] = useState<Company[]>(mockCompanies)
   const [selectedCompanyId, setSelectedCompanyId] = useState<string | null>(null)
   const [activePage, setActivePage] = useState('dashboard')
-  const [messages] = useState<AgentMessage[]>(mockMessages)
-  const [actions] = useState<AgentAction[]>(mockActions)
+  const [messages, setMessages] = useState<AgentMessage[]>(mockMessages)
+  const [actions, setActions] = useState<AgentAction[]>(mockActions)
+  const [loading, setLoading] = useState(true)
+  const [error, setError] = useState<string | null>(null)
+  const [dataSource, setDataSource] = useState<'supabase' | 'mock'>('mock')
+
+  const loadFromSupabase = useCallback(async () => {
+    try {
+      setLoading(true)
+      setError(null)
+
+      const [companiesData, messagesData, actionsData] = await Promise.all([
+        db.fetchCompanies(),
+        db.fetchMessages(),
+        db.fetchActions(),
+      ])
+
+      if (companiesData.length > 0) {
+        setCompanies(companiesData)
+        setMessages(messagesData)
+        setActions(actionsData)
+        setDataSource('supabase')
+      } else {
+        setDataSource('mock')
+      }
+    } catch (err) {
+      console.error('Erro ao carregar dados do Supabase:', err)
+      setError('Usando dados demo. Verifique a conexao com o Supabase.')
+      setDataSource('mock')
+    } finally {
+      setLoading(false)
+    }
+  }, [])
+
+  useEffect(() => {
+    loadFromSupabase()
+  }, [loadFromSupabase])
 
   const selectedCompany = companies.find((c) => c.id === selectedCompanyId) || null
 
   const addCompany = (company: Company) => setCompanies((prev) => [...prev, company])
 
-  const updateCompany = (id: string, data: Partial<Company>) =>
+  const updateCompany = (id: string, data: Partial<Company>) => {
     setCompanies((prev) => prev.map((c) => (c.id === id ? { ...c, ...data } : c)))
+    if (dataSource === 'supabase') {
+      db.updateCompanyData(id, data).catch(console.error)
+    }
+  }
 
   const totalBudget = companies.reduce((sum, c) => sum + c.monthlyBudget, 0)
   const totalLeads = companies.reduce(
@@ -71,6 +115,10 @@ export function AppProvider({ children }: { children: ReactNode }) {
         totalLeads,
         totalROAS: avgROAS,
         activeAgents,
+        loading,
+        error,
+        refresh: loadFromSupabase,
+        dataSource,
       }}
     >
       {children}
