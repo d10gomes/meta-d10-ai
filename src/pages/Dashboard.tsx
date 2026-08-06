@@ -46,14 +46,14 @@ export default function Dashboard() {
   }, [allCampaigns])
 
   const companyRanking = useMemo(() => {
-    return companies.map(c => {
+    return displayCompanies.map(c => {
       const spend = c.campaigns.reduce((s, camp) => s + camp.metrics.spend, 0)
       const conversions = c.campaigns.reduce((s, camp) => s + camp.metrics.conversions, 0)
       const rev = c.campaigns.reduce((s, camp) => s + camp.metrics.roas * camp.metrics.spend, 0)
       const roas = spend > 0 ? rev / spend : 0
       return { id: c.id, name: c.name, spend, conversions, roas, campaigns: c.campaigns.length, agents: c.agents.length, status: c.status }
     }).sort((a, b) => b.spend - a.spend)
-  }, [companies])
+  }, [displayCompanies])
 
   const toggleEngine = async () => {
     if (engineRunning) {
@@ -65,10 +65,14 @@ export default function Dashboard() {
     }
   }
 
+  const companiesToSync = selectedCompanyId
+    ? companies.filter(c => c.id === selectedCompanyId)
+    : companies
+
   const handleSyncAll = async () => {
     setSyncing(true)
     try {
-      for (const company of companies) {
+      for (const company of companiesToSync) {
         const metaConfig = await fetchMetaConfig(company.id)
         if (!metaConfig || metaConfig.status !== 'connected') continue
         const opts = { accessToken: metaConfig.accessToken, adAccountId: metaConfig.adAccountId }
@@ -111,7 +115,7 @@ export default function Dashboard() {
             className="flex items-center gap-2 px-4 py-2 rounded-xl text-sm font-medium bg-gray-100 text-gray-700 hover:bg-gray-200 disabled:opacity-50"
           >
             {syncing ? <Loader2 size={14} className="animate-spin" /> : <RefreshCw size={14} />}
-            {syncing ? 'Sincronizando...' : 'Sincronizar'}
+            {syncing ? 'Sincronizando...' : selectedCompanyId ? 'Sincronizar Empresa' : 'Sincronizar Todas'}
           </button>
           <button
             type="button"
@@ -181,7 +185,7 @@ export default function Dashboard() {
               <div className="p-5 border-b border-gray-100 flex items-center justify-between">
                 <div>
                   <h3 className="font-semibold text-gray-900">Contas de Anuncio</h3>
-                  <p className="text-xs text-gray-500">{companies.length} contas conectadas</p>
+                  <p className="text-xs text-gray-500">{displayCompanies.length} {selectedCompanyId ? 'conta selecionada' : 'contas conectadas'}</p>
                 </div>
                 <div className="flex items-center gap-2 text-xs text-gray-500">
                   <span className="font-medium">{activeCampaigns.length} campanhas ativas</span>

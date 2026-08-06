@@ -3,9 +3,13 @@ import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContaine
 import { useApp } from '../contexts/AppContext'
 
 export default function ROITracker() {
-  const { companies } = useApp()
+  const { companies, selectedCompanyId } = useApp()
 
-  const roiData = companies.map(c => {
+  const filteredCompanies = selectedCompanyId
+    ? companies.filter(c => c.id === selectedCompanyId)
+    : companies
+
+  const roiData = filteredCompanies.map(c => {
     const totalSpend = c.campaigns.reduce((s, camp) => s + camp.metrics.spend, 0)
     const avgRoas = c.campaigns.length > 0 ? c.campaigns.reduce((s, camp) => s + camp.metrics.roas, 0) / c.campaigns.length : 0
     const totalRevenue = totalSpend * avgRoas

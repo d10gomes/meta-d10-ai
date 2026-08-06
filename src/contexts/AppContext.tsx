@@ -75,23 +75,27 @@ export function AppProvider({ children }: { children: ReactNode }) {
     }
   }
 
-  const totalBudget = companies.reduce((sum, c) => sum + c.monthlyBudget, 0)
-  const totalLeads = companies.reduce(
+  const filteredCompanies = selectedCompanyId
+    ? companies.filter(c => c.id === selectedCompanyId)
+    : companies
+
+  const totalBudget = filteredCompanies.reduce((sum, c) => sum + c.monthlyBudget, 0)
+  const totalLeads = filteredCompanies.reduce(
     (sum, c) => sum + c.campaigns.reduce((s, camp) => s + camp.metrics.conversions, 0),
     0
   )
   const avgROAS =
-    companies.length > 0
-      ? companies.reduce(
+    filteredCompanies.length > 0
+      ? filteredCompanies.reduce(
           (sum, c) =>
             sum +
             (c.campaigns.length > 0
               ? c.campaigns.reduce((s, camp) => s + camp.metrics.roas, 0) / c.campaigns.length
               : 0),
           0
-        ) / companies.length
+        ) / filteredCompanies.length
       : 0
-  const activeAgents = companies.reduce((sum, c) => sum + c.agents.filter((a) => a.status !== 'idle').length, 0)
+  const activeAgents = filteredCompanies.reduce((sum, c) => sum + c.agents.filter((a) => a.status !== 'idle').length, 0)
 
   return (
     <AppContext.Provider

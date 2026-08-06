@@ -17,7 +17,11 @@ const menuItems = [
 ]
 
 export default function Sidebar() {
-  const { activePage, setActivePage, activeAgents, companies } = useApp()
+  const { activePage, setActivePage, activeAgents, companies, selectedCompanyId } = useApp()
+
+  const filteredCompanies = selectedCompanyId
+    ? companies.filter(c => c.id === selectedCompanyId)
+    : companies
 
   return (
     <aside className="w-64 bg-gray-950 text-white min-h-screen p-4 flex flex-col flex-shrink-0">
@@ -52,7 +56,7 @@ export default function Sidebar() {
         <div className="p-3 bg-gray-900 rounded-xl border border-gray-800">
           <div className="flex justify-between text-xs mb-1">
             <span className="text-gray-400">Empresas ativas</span>
-            <span className="text-white font-bold">{companies.filter(c => c.status === 'active').length}</span>
+            <span className="text-white font-bold">{filteredCompanies.filter(c => c.status === 'active').length}</span>
           </div>
           <div className="flex justify-between text-xs">
             <span className="text-gray-400">Agentes ativos</span>
@@ -68,7 +72,7 @@ export default function Sidebar() {
             </span>
             <p className="text-xs text-blue-300 font-medium">Orquestra IA Ativa</p>
           </div>
-          <p className="text-xs text-gray-400 mt-1">Otimizando {companies.reduce((s, c) => s + c.campaigns.length, 0)} campanhas</p>
+          <p className="text-xs text-gray-400 mt-1">Otimizando {filteredCompanies.reduce((s, c) => s + c.campaigns.length, 0)} campanhas</p>
         </div>
       </div>
     </aside>

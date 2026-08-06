@@ -8,9 +8,13 @@ const iconMap: Record<string, React.ElementType> = {
 }
 
 export default function Agents() {
-  const { companies, messages } = useApp()
+  const { companies, selectedCompanyId, messages } = useApp()
 
-  const allAgents = companies.flatMap((c) =>
+  const filteredCompanies = selectedCompanyId
+    ? companies.filter(c => c.id === selectedCompanyId)
+    : companies
+
+  const allAgents = filteredCompanies.flatMap((c) =>
     c.agents.map((a) => ({ ...a, companyName: c.name, companyId: c.id }))
   )
 
