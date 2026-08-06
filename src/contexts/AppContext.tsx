@@ -1,7 +1,6 @@
 import { createContext, useContext, useState, useEffect, useCallback, type ReactNode } from 'react'
 import type { Company } from '../types/company'
 import type { AgentMessage, AgentAction } from '../types/agent'
-import { mockCompanies, mockMessages, mockActions } from '../lib/mock-data'
 import * as db from '../lib/supabase-data'
 
 interface AppContextType {
@@ -28,11 +27,11 @@ interface AppContextType {
 const AppContext = createContext<AppContextType | null>(null)
 
 export function AppProvider({ children }: { children: ReactNode }) {
-  const [companies, setCompanies] = useState<Company[]>(mockCompanies)
+  const [companies, setCompanies] = useState<Company[]>([])
   const [selectedCompanyId, setSelectedCompanyId] = useState<string | null>(null)
   const [activePage, setActivePage] = useState('dashboard')
-  const [messages, setMessages] = useState<AgentMessage[]>(mockMessages)
-  const [actions, setActions] = useState<AgentAction[]>(mockActions)
+  const [messages, setMessages] = useState<AgentMessage[]>([])
+  const [actions, setActions] = useState<AgentAction[]>([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
   const [dataSource, setDataSource] = useState<'supabase' | 'mock'>('mock')
@@ -48,18 +47,14 @@ export function AppProvider({ children }: { children: ReactNode }) {
         db.fetchActions(),
       ])
 
-      if (companiesData.length > 0) {
-        setCompanies(companiesData)
-        setMessages(messagesData)
-        setActions(actionsData)
-        setDataSource('supabase')
-      } else {
-        setDataSource('mock')
-      }
+      setCompanies(companiesData)
+      setMessages(messagesData)
+      setActions(actionsData)
+      setDataSource('supabase')
     } catch (err) {
       console.error('Erro ao carregar dados do Supabase:', err)
-      setError('Usando dados demo. Verifique a conexao com o Supabase.')
-      setDataSource('mock')
+      setError('Erro ao conectar com o Supabase. Verifique a conexao.')
+      setDataSource('supabase')
     } finally {
       setLoading(false)
     }
