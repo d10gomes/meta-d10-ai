@@ -320,64 +320,75 @@ export async function getAdAccounts(accessToken: string) {
 // ==================== SYNC: META -> SUPABASE ====================
 
 export async function syncCampaignsToSupabase(companyId: string, opts: MetaApiOptions) {
+  const validStatuses = ['ACTIVE', 'PAUSED', 'DRAFT', 'ARCHIVED', 'DELETED', 'IN_PROCESS']
+
   const metaCampaigns = await getMetaCampaigns(opts)
 
   for (const mc of metaCampaigns) {
+    const rawStatus = (mc.status || 'PAUSED').toUpperCase()
+    const status = validStatuses.includes(rawStatus) ? rawStatus : 'PAUSED'
+
     const mapped = {
       company_id: companyId,
       meta_campaign_id: mc.id,
-      name: mc.name,
-      objective: mapObjectiveFromMeta(mc.objective),
-      status: mc.status,
+      name: mc.name || `Campanha ${mc.id}`,
+      objective: mapObjectiveFromMeta(mc.objective || ''),
+      status,
       budget: mc.daily_budget ? Number(mc.daily_budget) / 100 : (mc.lifetime_budget ? Number(mc.lifetime_budget) / 100 : 0),
       budget_type: mc.daily_budget ? 'DAILY' : 'LIFETIME',
-      start_date: mc.start_time,
-      end_date: mc.stop_time || null,
+      start_date: mc.start_time ? mc.start_time.split('T')[0] : null,
+      end_date: mc.stop_time ? mc.stop_time.split('T')[0] : null,
       automation_enabled: false,
     }
 
-    await supabase
+    const { error } = await supabase
       .from('campaigns')
       .upsert(mapped, { onConflict: 'meta_campaign_id' })
+
+    if (error) console.error(`Erro ao upsert campanha ${mc.id}:`, error.message)
   }
 
-  const insights = await getMetaInsights(opts, {
-    level: 'campaign',
-    datePreset: 'last_7d',
-    fields: ['campaign_id', 'campaign_name', 'impressions', 'reach', 'clicks', 'ctr', 'cpc', 'cpm', 'spend', 'actions', 'purchase_roas', 'frequency'],
-  })
+  try {
+    const insights = await getMetaInsights(opts, {
+      level: 'campaign',
+      datePreset: 'last_7d',
+      fields: ['campaign_id', 'campaign_name', 'impressions', 'reach', 'clicks', 'ctr', 'cpc', 'cpm', 'spend', 'actions', 'action_values', 'purchase_roas', 'frequency'],
+    })
 
-  for (const insight of insights) {
-    const { data: campaign } = await supabase
-      .from('campaigns')
-      .select('id')
-      .eq('meta_campaign_id', insight.campaign_id)
-      .single()
+    for (const insight of insights) {
+      const { data: campaign } = await supabase
+        .from('campaigns')
+        .select('id')
+        .eq('meta_campaign_id', insight.campaign_id)
+        .single()
 
-    if (!campaign) continue
+      if (!campaign) continue
 
-    const conversions = (insight.actions || [])
-      .filter((a: Record<string, string>) => ['offsite_conversion', 'lead', 'purchase', 'complete_registration', 'app_install'].includes(a.action_type))
-      .reduce((sum: number, a: Record<string, string>) => sum + Number(a.value || 0), 0)
+      const conversions = (insight.actions || [])
+        .filter((a: Record<string, string>) => ['offsite_conversion', 'lead', 'purchase', 'complete_registration', 'app_install', 'onsite_conversion.messaging_conversation_started_7d'].includes(a.action_type))
+        .reduce((sum: number, a: Record<string, string>) => sum + Number(a.value || 0), 0)
 
-    const revenue = (insight.action_values || [])
-      .filter((a: Record<string, string>) => a.action_type === 'offsite_conversion.fb_pixel_purchase')
-      .reduce((sum: number, a: Record<string, string>) => sum + Number(a.value || 0), 0)
+      const revenue = (insight.action_values || [])
+        .filter((a: Record<string, string>) => ['offsite_conversion.fb_pixel_purchase', 'purchase'].includes(a.action_type))
+        .reduce((sum: number, a: Record<string, string>) => sum + Number(a.value || 0), 0)
 
-    await supabase.from('campaign_metrics').upsert({
-      campaign_id: campaign.id,
-      date: new Date().toISOString().split('T')[0],
-      impressions: Number(insight.impressions || 0),
-      reach: Number(insight.reach || 0),
-      clicks: Number(insight.clicks || 0),
-      ctr: Number(insight.ctr || 0),
-      cpc: Number(insight.cpc || 0),
-      cpm: Number(insight.cpm || 0),
-      spend: Number(insight.spend || 0),
-      conversions,
-      revenue,
-      frequency: Number(insight.frequency || 0),
-    }, { onConflict: 'campaign_id,date' })
+      await supabase.from('campaign_metrics').upsert({
+        campaign_id: campaign.id,
+        date: new Date().toISOString().split('T')[0],
+        impressions: Number(insight.impressions || 0),
+        reach: Number(insight.reach || 0),
+        clicks: Number(insight.clicks || 0),
+        ctr: Number(insight.ctr || 0),
+        cpc: Number(insight.cpc || 0),
+        cpm: Number(insight.cpm || 0),
+        spend: Number(insight.spend || 0),
+        conversions,
+        revenue,
+        frequency: Number(insight.frequency || 0),
+      }, { onConflict: 'campaign_id,date' })
+    }
+  } catch (insightErr) {
+    console.error('Erro ao buscar insights (campanhas salvas sem metricas):', insightErr)
   }
 }
 
