@@ -13,12 +13,18 @@ export async function getMetaCampaigns(opts: MetaApiOptions) {
   const { accessToken, adAccountId } = opts
   const accountId = adAccountId.startsWith('act_') ? adAccountId : `act_${adAccountId}`
 
-  const res = await fetch(
-    `${META_GRAPH_URL}/${accountId}/campaigns?fields=id,name,objective,status,daily_budget,lifetime_budget,start_time,stop_time,buying_type,bid_strategy,special_ad_categories&access_token=${accessToken}`
-  )
-  const data = await res.json()
-  if (data.error) throw new MetaApiError(data.error)
-  return data.data || []
+  let allCampaigns: Record<string, unknown>[] = []
+  let url: string | null = `${META_GRAPH_URL}/${accountId}/campaigns?fields=id,name,objective,status,daily_budget,lifetime_budget,start_time,stop_time,buying_type,bid_strategy,special_ad_categories&limit=100&access_token=${accessToken}`
+
+  while (url) {
+    const res = await fetch(url)
+    const data = await res.json()
+    if (data.error) throw new MetaApiError(data.error)
+    allCampaigns = allCampaigns.concat(data.data || [])
+    url = data.paging?.next || null
+  }
+
+  return allCampaigns
 }
 
 export async function createMetaCampaign(opts: MetaApiOptions, campaign: {
@@ -210,11 +216,20 @@ export async function getMetaInsights(opts: MetaApiOptions, params: {
   if (params.datePreset) queryParams.set('date_preset', params.datePreset)
   if (params.timeRange) queryParams.set('time_range', JSON.stringify(params.timeRange))
   if (params.breakdowns) queryParams.set('breakdowns', params.breakdowns.join(','))
+  queryParams.set('limit', '100')
 
-  const res = await fetch(`${META_GRAPH_URL}/${objectId}/insights?${queryParams}`)
-  const data = await res.json()
-  if (data.error) throw new MetaApiError(data.error)
-  return data.data || []
+  let allInsights: Record<string, unknown>[] = []
+  let url: string | null = `${META_GRAPH_URL}/${objectId}/insights?${queryParams}`
+
+  while (url) {
+    const res = await fetch(url)
+    const data = await res.json()
+    if (data.error) throw new MetaApiError(data.error)
+    allInsights = allInsights.concat(data.data || [])
+    url = data.paging?.next || null
+  }
+
+  return allInsights
 }
 
 export async function getAccountInsights(opts: MetaApiOptions, datePreset = 'last_7d') {
@@ -351,7 +366,7 @@ export async function syncCampaignsToSupabase(companyId: string, opts: MetaApiOp
   try {
     const insights = await getMetaInsights(opts, {
       level: 'campaign',
-      datePreset: 'last_7d',
+      datePreset: 'last_30d',
       fields: ['campaign_id', 'campaign_name', 'impressions', 'reach', 'clicks', 'ctr', 'cpc', 'cpm', 'spend', 'actions', 'action_values', 'purchase_roas', 'frequency'],
     })
 
@@ -360,17 +375,35 @@ export async function syncCampaignsToSupabase(companyId: string, opts: MetaApiOp
         .from('campaigns')
         .select('id')
         .eq('meta_campaign_id', insight.campaign_id)
-        .single()
+        .maybeSingle()
 
       if (!campaign) continue
 
+      const conversionTypes = [
+        'offsite_conversion', 'lead', 'purchase', 'complete_registration', 'app_install',
+        'onsite_conversion.messaging_conversation_started_7d',
+        'offsite_conversion.fb_pixel_purchase', 'offsite_conversion.fb_pixel_lead',
+        'offsite_conversion.fb_pixel_complete_registration',
+        'omni_purchase', 'web_in_store_purchase',
+      ]
       const conversions = (insight.actions || [])
-        .filter((a: Record<string, string>) => ['offsite_conversion', 'lead', 'purchase', 'complete_registration', 'app_install', 'onsite_conversion.messaging_conversation_started_7d'].includes(a.action_type))
+        .filter((a: Record<string, string>) => conversionTypes.includes(a.action_type))
         .reduce((sum: number, a: Record<string, string>) => sum + Number(a.value || 0), 0)
 
-      const revenue = (insight.action_values || [])
-        .filter((a: Record<string, string>) => ['offsite_conversion.fb_pixel_purchase', 'purchase'].includes(a.action_type))
+      const revenueTypes = [
+        'offsite_conversion.fb_pixel_purchase', 'purchase',
+        'onsite_web_app_purchase', 'onsite_web_purchase', 'omni_purchase', 'web_in_store_purchase',
+      ]
+      let revenue = (insight.action_values || [])
+        .filter((a: Record<string, string>) => revenueTypes.includes(a.action_type))
         .reduce((sum: number, a: Record<string, string>) => sum + Number(a.value || 0), 0)
+
+      if (revenue === 0 && insight.purchase_roas) {
+        const roasVal = Array.isArray(insight.purchase_roas)
+          ? Number(insight.purchase_roas[0]?.value || 0)
+          : Number(insight.purchase_roas || 0)
+        if (roasVal > 0) revenue = roasVal * Number(insight.spend || 0)
+      }
 
       await supabase.from('campaign_metrics').upsert({
         campaign_id: campaign.id,
