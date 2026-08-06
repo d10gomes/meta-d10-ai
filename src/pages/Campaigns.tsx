@@ -1,5 +1,7 @@
-import { Plus, Circle, MoreVertical, MessageCircle, ShoppingCart, ExternalLink, UserPlus, Smartphone, Eye, Heart, Filter } from 'lucide-react'
+import { useState } from 'react'
+import { Plus, Circle, MessageCircle, ShoppingCart, ExternalLink, UserPlus, Smartphone, Eye, Heart, Filter, Play, Pause, TrendingUp, Loader2 } from 'lucide-react'
 import { useApp } from '../contexts/AppContext'
+import { updateCampaignStatus, updateCampaignBudget } from '../lib/supabase-data'
 import type { MetaObjective } from '../types/meta'
 
 const objectiveIcons: Record<MetaObjective, React.ElementType> = {
@@ -21,7 +23,9 @@ const objectiveLabels: Record<MetaObjective, string> = {
 }
 
 export default function Campaigns() {
-  const { companies, selectedCompanyId } = useApp()
+  const { companies, selectedCompanyId, refresh, dataSource } = useApp()
+  const [actionLoading, setActionLoading] = useState<string | null>(null)
+  const [filterObjective, setFilterObjective] = useState<MetaObjective | null>(null)
 
   const filteredCompanies = selectedCompanyId
     ? companies.filter(c => c.id === selectedCompanyId)
@@ -31,10 +35,40 @@ export default function Campaigns() {
     c.campaigns.map(camp => ({ ...camp, companyName: c.name }))
   )
 
+  const displayCampaigns = filterObjective
+    ? allCampaigns.filter(c => c.objective === filterObjective)
+    : allCampaigns
+
+  const handleToggleStatus = async (campaignId: string, currentStatus: string) => {
+    setActionLoading(campaignId)
+    try {
+      const newStatus = currentStatus === 'ACTIVE' ? 'PAUSED' : 'ACTIVE'
+      await updateCampaignStatus(campaignId, newStatus)
+      await refresh()
+    } catch (err) {
+      console.error('Erro ao alterar status:', err)
+    } finally {
+      setActionLoading(null)
+    }
+  }
+
+  const handleScaleBudget = async (campaignId: string, currentBudget: number) => {
+    setActionLoading(campaignId)
+    try {
+      const newBudget = Math.round(currentBudget * 1.2 * 100) / 100
+      await updateCampaignBudget(campaignId, newBudget)
+      await refresh()
+    } catch (err) {
+      console.error('Erro ao escalar budget:', err)
+    } finally {
+      setActionLoading(null)
+    }
+  }
+
   return (
     <div className="space-y-6">
       <div className="flex items-center justify-between">
-        <p className="text-sm text-gray-500">{allCampaigns.length} campanhas {selectedCompanyId ? '' : 'em todas as empresas'}</p>
+        <p className="text-sm text-gray-500">{displayCampaigns.length} campanhas {selectedCompanyId ? '' : 'em todas as empresas'}</p>
         <button className="flex items-center gap-2 bg-blue-600 text-white px-4 py-2.5 rounded-xl text-sm font-medium hover:bg-blue-700 transition-colors">
           <Plus size={16} />
           Nova Campanha
@@ -42,15 +76,25 @@ export default function Campaigns() {
       </div>
 
       <div className="flex gap-2 flex-wrap">
+        <button
+          onClick={() => setFilterObjective(null)}
+          className={`text-xs font-medium px-3 py-1.5 rounded-full transition-colors ${!filterObjective ? 'bg-gray-900 text-white' : 'bg-gray-100 text-gray-600 hover:bg-gray-200'}`}
+        >
+          Todas ({allCampaigns.length})
+        </button>
         {(['LEADS', 'SALES', 'TRAFFIC', 'REGISTRATION', 'ENGAGEMENT', 'AWARENESS', 'FUNNEL', 'APP_INSTALL'] as MetaObjective[]).map((obj) => {
           const Icon = objectiveIcons[obj]
           const count = allCampaigns.filter(c => c.objective === obj).length
           if (count === 0) return null
           return (
-            <span key={obj} className={`inline-flex items-center gap-1.5 text-xs font-medium px-3 py-1.5 rounded-full ${objectiveColors[obj]}`}>
+            <button
+              key={obj}
+              onClick={() => setFilterObjective(filterObjective === obj ? null : obj)}
+              className={`inline-flex items-center gap-1.5 text-xs font-medium px-3 py-1.5 rounded-full transition-colors ${filterObjective === obj ? 'ring-2 ring-offset-1 ring-blue-500' : ''} ${objectiveColors[obj]}`}
+            >
               <Icon size={12} />
               {objectiveLabels[obj]} ({count})
-            </span>
+            </button>
           )
         })}
       </div>
@@ -70,12 +114,13 @@ export default function Campaigns() {
                 <th className="text-left px-5 py-3.5 font-medium">CPA</th>
                 <th className="text-left px-5 py-3.5 font-medium">ROAS</th>
                 <th className="text-left px-5 py-3.5 font-medium">CTR</th>
-                <th className="px-5 py-3.5"></th>
+                <th className="px-5 py-3.5 font-medium text-right">Acoes</th>
               </tr>
             </thead>
             <tbody>
-              {allCampaigns.map((camp) => {
+              {displayCampaigns.map((camp) => {
                 const Icon = objectiveIcons[camp.objective]
+                const isLoading = actionLoading === camp.id
                 return (
                   <tr key={camp.id} className="border-t border-gray-50 hover:bg-gray-50/50 transition-colors">
                     <td className="px-5 py-3.5">
@@ -100,10 +145,11 @@ export default function Campaigns() {
                       <span className={`inline-flex items-center gap-1.5 text-xs font-medium px-2.5 py-1 rounded-full ${
                         camp.status === 'ACTIVE' ? 'bg-green-50 text-green-700' :
                         camp.status === 'PAUSED' ? 'bg-gray-100 text-gray-500' :
+                        camp.status === 'ARCHIVED' ? 'bg-red-50 text-red-600' :
                         'bg-yellow-50 text-yellow-700'
                       }`}>
                         <Circle size={6} fill="currentColor" />
-                        {camp.status === 'ACTIVE' ? 'Ativa' : camp.status === 'PAUSED' ? 'Pausada' : camp.status}
+                        {camp.status === 'ACTIVE' ? 'Ativa' : camp.status === 'PAUSED' ? 'Pausada' : camp.status === 'ARCHIVED' ? 'Arquivada' : camp.status}
                       </span>
                     </td>
                     <td className="px-5 py-3.5 text-gray-600">R$ {camp.budget}/dia</td>
@@ -117,7 +163,32 @@ export default function Campaigns() {
                     </td>
                     <td className="px-5 py-3.5 text-gray-600">{camp.metrics.ctr.toFixed(1)}%</td>
                     <td className="px-5 py-3.5">
-                      <button className="text-gray-400 hover:text-gray-600"><MoreVertical size={16} /></button>
+                      <div className="flex items-center justify-end gap-1">
+                        {isLoading ? (
+                          <Loader2 size={16} className="animate-spin text-gray-400" />
+                        ) : (
+                          <>
+                            <button
+                              onClick={() => handleToggleStatus(camp.id, camp.status)}
+                              title={camp.status === 'ACTIVE' ? 'Pausar' : 'Ativar'}
+                              disabled={dataSource === 'mock'}
+                              className={`p-1.5 rounded-lg transition-colors ${camp.status === 'ACTIVE' ? 'text-yellow-600 hover:bg-yellow-50' : 'text-green-600 hover:bg-green-50'} disabled:opacity-30`}
+                            >
+                              {camp.status === 'ACTIVE' ? <Pause size={14} /> : <Play size={14} />}
+                            </button>
+                            {camp.status === 'ACTIVE' && camp.metrics.roas >= 2 && (
+                              <button
+                                onClick={() => handleScaleBudget(camp.id, camp.budget)}
+                                title="Escalar +20%"
+                                disabled={dataSource === 'mock'}
+                                className="p-1.5 rounded-lg text-blue-600 hover:bg-blue-50 transition-colors disabled:opacity-30"
+                              >
+                                <TrendingUp size={14} />
+                              </button>
+                            )}
+                          </>
+                        )}
+                      </div>
                     </td>
                   </tr>
                 )

@@ -302,15 +302,15 @@ export async function fetchAutomationRules(companyId?: string) {
     id: r.id as string,
     companyId: r.company_id as string,
     name: r.name as string,
-    agentRole: r.agent_role as string,
-    condition: r.condition_type as string,
-    metric: r.metric as string,
-    operator: r.operator as string,
-    threshold: r.threshold as number,
+    agentRole: (r.agent_role as string) || 'analytics',
+    condition: (r.condition_type as string) || `${r.condition_metric || r.metric || ''} ${r.condition_operator || r.operator || ''} ${r.condition_value ?? r.threshold ?? ''}`,
+    metric: (r.metric as string) || (r.condition_metric as string) || '',
+    operator: (r.operator as string) || (r.condition_operator as string) || '',
+    threshold: (r.threshold as number) ?? (r.condition_value as number) ?? 0,
     action: r.action_type as string,
-    actionParams: r.action_params as Record<string, unknown>,
+    actionParams: (r.action_params as Record<string, unknown>) || {},
     enabled: r.enabled as boolean,
-    lastTriggered: r.last_triggered_at as string | null,
+    lastTriggered: (r.last_triggered_at as string) || (r.last_run_at as string) || null,
   }))
 }
 
