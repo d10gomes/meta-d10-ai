@@ -425,6 +425,135 @@ export async function syncCampaignsToSupabase(companyId: string, opts: MetaApiOp
   }
 }
 
+// ==================== SYNC ADS: META -> SUPABASE ====================
+
+export async function syncAdsToSupabase(companyId: string, opts: MetaApiOptions) {
+  const { data: campaigns } = await supabase
+    .from('campaigns')
+    .select('id, meta_campaign_id')
+    .eq('company_id', companyId)
+    .not('meta_campaign_id', 'is', null)
+
+  if (!campaigns || campaigns.length === 0) return
+
+  for (const camp of campaigns) {
+    try {
+      const campaignAds = await fetchCampaignAds(opts, camp.meta_campaign_id)
+
+      for (const ad of campaignAds) {
+        const creativeType = ad.creative?.thumbnail_url ? 'VIDEO'
+          : ad.creative?.image_url ? 'IMAGE' : 'IMAGE'
+
+        const { error } = await supabase
+          .from('ads')
+          .upsert({
+            campaign_id: camp.id,
+            meta_ad_id: ad.id,
+            name: ad.name || `Ad ${ad.id}`,
+            status: ad.status || 'ACTIVE',
+            creative_type: creativeType,
+            headline: ad.creative?.title || '',
+            description: ad.creative?.body || '',
+            call_to_action: ad.creative?.call_to_action_type || '',
+            media_url: ad.creative?.image_url || '',
+            thumbnail_url: ad.creative?.thumbnail_url || '',
+          }, { onConflict: 'meta_ad_id' })
+
+        if (error) console.error(`Erro ao upsert ad ${ad.id}:`, error.message)
+      }
+    } catch {
+      // skip campaign if ad fetch fails
+    }
+  }
+
+  // Fetch campaign insights from Meta and distribute across ads
+  for (const camp of campaigns) {
+    try {
+      const { data: campAds } = await supabase
+        .from('ads')
+        .select('id, status')
+        .eq('campaign_id', camp.id)
+
+      if (!campAds || campAds.length === 0) continue
+
+      const insights = await getMetaInsights(opts, {
+        objectId: camp.meta_campaign_id,
+        datePreset: 'last_30d',
+        fields: ['impressions', 'reach', 'clicks', 'ctr', 'cpc', 'cpm', 'spend', 'actions', 'action_values', 'purchase_roas', 'frequency'],
+      })
+
+      if (!insights || insights.length === 0) continue
+
+      const insight = insights[0]
+      const totalSpend = Number(insight.spend || 0)
+      const totalImpressions = Number(insight.impressions || 0)
+      const totalClicks = Number(insight.clicks || 0)
+      const totalReach = Number(insight.reach || 0)
+      const frequency = Number(insight.frequency || 0)
+
+      const conversionTypes = ['lead', 'purchase', 'complete_registration', 'omni_purchase', 'offsite_conversion.fb_pixel_purchase', 'offsite_conversion.fb_pixel_lead']
+      const totalConversions = (insight.actions || [])
+        .filter((a: Record<string, string>) => conversionTypes.includes(a.action_type))
+        .reduce((sum: number, a: Record<string, string>) => sum + Number(a.value || 0), 0)
+
+      const revenueTypes = ['onsite_web_app_purchase', 'onsite_web_purchase', 'omni_purchase', 'offsite_conversion.fb_pixel_purchase', 'purchase']
+      let totalRevenue = (insight.action_values || [])
+        .filter((a: Record<string, string>) => revenueTypes.includes(a.action_type))
+        .reduce((sum: number, a: Record<string, string>) => sum + Number(a.value || 0), 0)
+
+      if (totalRevenue === 0 && insight.purchase_roas) {
+        const roasVal = Array.isArray(insight.purchase_roas)
+          ? Number(insight.purchase_roas[0]?.value || 0)
+          : Number(insight.purchase_roas || 0)
+        if (roasVal > 0) totalRevenue = roasVal * totalSpend
+      }
+
+      const activeAds = campAds.filter(a => a.status === 'ACTIVE')
+      const adsToDistribute = activeAds.length > 0 ? activeAds : campAds
+      const adCount = adsToDistribute.length
+      const today = new Date().toISOString().split('T')[0]
+
+      for (const ad of adsToDistribute) {
+        const share = 1 / adCount
+        const adSpend = totalSpend * share
+        const adImpressions = Math.round(totalImpressions * share)
+        const adClicks = Math.round(totalClicks * share)
+        const adReach = Math.round(totalReach * share)
+        const adConversions = Math.round(totalConversions * share)
+        const adRevenue = totalRevenue * share
+
+        await supabase.from('ad_metrics').upsert({
+          ad_id: ad.id,
+          date: today,
+          impressions: adImpressions,
+          reach: adReach,
+          clicks: adClicks,
+          ctr: adImpressions > 0 ? (adClicks / adImpressions) * 100 : 0,
+          cpc: adClicks > 0 ? adSpend / adClicks : 0,
+          cpm: adImpressions > 0 ? (adSpend / adImpressions) * 1000 : 0,
+          spend: adSpend,
+          conversions: adConversions,
+          cost_per_conversion: adConversions > 0 ? adSpend / adConversions : 0,
+          roas: adSpend > 0 ? adRevenue / adSpend : 0,
+          frequency,
+          revenue: adRevenue,
+        }, { onConflict: 'ad_id,date' })
+      }
+    } catch {
+      // skip campaign if insights fetch fails
+    }
+  }
+}
+
+async function fetchCampaignAds(opts: MetaApiOptions, campaignId: string) {
+  const res = await fetch(
+    `${META_GRAPH_URL}/${campaignId}/ads?fields=id,name,status,creative{id,title,body,image_url,video_id,call_to_action_type,thumbnail_url}&limit=100&access_token=${opts.accessToken}`
+  )
+  const data = await res.json()
+  if (data.error) return []
+  return data.data || []
+}
+
 // ==================== HELPERS ====================
 
 function mapObjectiveToMeta(objective: string): string {

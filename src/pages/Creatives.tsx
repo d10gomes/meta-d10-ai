@@ -7,7 +7,13 @@ const typeIcons: Record<string, React.ElementType> = {
   VIDEO: Video, IMAGE: Image, CAROUSEL: LayoutGrid, COLLECTION: Package,
 }
 
-function getCreativeStatus(ad: Ad): 'winning' | 'stable' | 'losing' | 'fatigue' {
+function getCreativeStatus(ad: Ad): 'winning' | 'stable' | 'losing' | 'fatigue' | 'no_data' {
+  const hasMetrics = ad.metrics.impressions > 0 || ad.metrics.spend > 0
+  if (!hasMetrics) {
+    if (ad.status === 'ACTIVE') return 'stable'
+    if (ad.status === 'PAUSED') return 'no_data'
+    return 'losing'
+  }
   if (ad.metrics.frequency > 3) return 'fatigue'
   if (ad.metrics.ctr >= 3 && ad.metrics.roas >= 2) return 'winning'
   if (ad.metrics.ctr < 1 || (ad.metrics.roas > 0 && ad.metrics.roas < 1)) return 'losing'
@@ -16,9 +22,10 @@ function getCreativeStatus(ad: Ad): 'winning' | 'stable' | 'losing' | 'fatigue' 
 
 const statusConfig = {
   winning: { label: 'Vencedor', color: 'bg-green-50 text-green-700' },
-  stable: { label: 'Estavel', color: 'bg-blue-50 text-blue-700' },
+  stable: { label: 'Ativo', color: 'bg-blue-50 text-blue-700' },
   losing: { label: 'Perdendo', color: 'bg-red-50 text-red-700' },
   fatigue: { label: 'Fadiga', color: 'bg-yellow-50 text-yellow-700' },
+  no_data: { label: 'Pausado', color: 'bg-gray-50 text-gray-500' },
 }
 
 export default function Creatives() {
@@ -29,7 +36,7 @@ export default function Creatives() {
     : companies
 
   const creatives = useMemo(() => {
-    const result: Array<Ad & { companyName: string; campaignName: string; status: string }> = []
+    const result: Array<Ad & { companyName: string; campaignName: string; status: string; adStatus: string }> = []
 
     for (const company of filteredCompanies) {
       for (const camp of company.campaigns) {
@@ -38,19 +45,29 @@ export default function Creatives() {
             ...ad,
             companyName: company.name,
             campaignName: camp.name,
+            adStatus: ad.status,
             status: getCreativeStatus(ad),
           })
         }
       }
     }
 
-    return result.sort((a, b) => b.metrics.ctr - a.metrics.ctr)
+    const statusOrder = { winning: 0, stable: 1, fatigue: 2, losing: 3, no_data: 4 }
+    return result.sort((a, b) => {
+      const hasMetricsA = a.metrics.impressions > 0 ? 0 : 1
+      const hasMetricsB = b.metrics.impressions > 0 ? 0 : 1
+      if (hasMetricsA !== hasMetricsB) return hasMetricsA - hasMetricsB
+      if (hasMetricsA === 0) return b.metrics.ctr - a.metrics.ctr
+      return (statusOrder[a.status as keyof typeof statusOrder] ?? 4) - (statusOrder[b.status as keyof typeof statusOrder] ?? 4)
+    })
   }, [filteredCompanies])
 
   const winning = creatives.filter(c => c.status === 'winning').length
+  const active = creatives.filter(c => c.status === 'stable').length
   const fatigued = creatives.filter(c => c.status === 'fatigue' || c.status === 'losing').length
-  const avgCtr = creatives.length > 0
-    ? creatives.reduce((s, c) => s + c.metrics.ctr, 0) / creatives.length
+  const withMetrics = creatives.filter(c => c.metrics.impressions > 0)
+  const avgCtr = withMetrics.length > 0
+    ? withMetrics.reduce((s, c) => s + c.metrics.ctr, 0) / withMetrics.length
     : 0
 
   if (creatives.length === 0) {
@@ -91,8 +108,8 @@ export default function Creatives() {
           <p className="text-3xl font-bold text-gray-900 mt-1">{creatives.length}</p>
         </div>
         <div className="bg-white rounded-2xl p-5 shadow-sm border border-gray-100">
-          <p className="text-sm text-gray-500">Vencedores</p>
-          <p className="text-3xl font-bold text-green-600 mt-1">{winning}</p>
+          <p className="text-sm text-gray-500">{winning > 0 ? 'Vencedores' : 'Ativos'}</p>
+          <p className="text-3xl font-bold text-green-600 mt-1">{winning > 0 ? winning : active}</p>
         </div>
         <div className="bg-white rounded-2xl p-5 shadow-sm border border-gray-100">
           <div className="flex items-center gap-1.5">
@@ -126,25 +143,45 @@ export default function Creatives() {
                   <p className="text-xs text-gray-400 mt-1 truncate">"{creative.creative.headline}"</p>
                 )}
 
-                <div className="grid grid-cols-3 gap-2 mt-3">
-                  <div className="text-center p-2 bg-gray-50 rounded-lg">
-                    <p className="text-xs text-gray-500">CTR</p>
-                    <p className={`text-sm font-bold ${creative.metrics.ctr >= 3 ? 'text-green-600' : creative.metrics.ctr >= 1.5 ? 'text-yellow-600' : 'text-red-600'}`}>{creative.metrics.ctr.toFixed(1)}%</p>
+                {creative.metrics.impressions > 0 ? (
+                  <>
+                    <div className="grid grid-cols-3 gap-2 mt-3">
+                      <div className="text-center p-2 bg-gray-50 rounded-lg">
+                        <p className="text-xs text-gray-500">CTR</p>
+                        <p className={`text-sm font-bold ${creative.metrics.ctr >= 3 ? 'text-green-600' : creative.metrics.ctr >= 1.5 ? 'text-yellow-600' : 'text-red-600'}`}>{creative.metrics.ctr.toFixed(1)}%</p>
+                      </div>
+                      <div className="text-center p-2 bg-gray-50 rounded-lg">
+                        <p className="text-xs text-gray-500">CPC</p>
+                        <p className="text-sm font-bold text-gray-900">R${creative.metrics.cpc.toFixed(2)}</p>
+                      </div>
+                      <div className="text-center p-2 bg-gray-50 rounded-lg">
+                        <p className="text-xs text-gray-500">Conv.</p>
+                        <p className="text-sm font-bold text-gray-900">{creative.metrics.conversions}</p>
+                      </div>
+                    </div>
+                    <div className="flex items-center justify-between mt-3 text-xs text-gray-400">
+                      <span>Freq: {creative.metrics.frequency.toFixed(1)}</span>
+                      <span>R$ {creative.metrics.spend.toLocaleString('pt-BR')} gasto</span>
+                    </div>
+                  </>
+                ) : (
+                  <div className={`mt-3 grid ${creative.creative.callToAction ? 'grid-cols-3' : 'grid-cols-2'} gap-2`}>
+                    <div className="text-center p-2 bg-gray-50 rounded-lg">
+                      <p className="text-xs text-gray-500">Tipo</p>
+                      <p className="text-sm font-bold text-gray-700">{creative.creative.type === 'VIDEO' ? 'Video' : creative.creative.type === 'IMAGE' ? 'Imagem' : creative.creative.type}</p>
+                    </div>
+                    <div className="text-center p-2 bg-gray-50 rounded-lg">
+                      <p className="text-xs text-gray-500">Status</p>
+                      <p className={`text-sm font-bold ${creative.adStatus === 'ACTIVE' ? 'text-green-600' : 'text-gray-500'}`}>{creative.adStatus === 'ACTIVE' ? 'Ativo' : creative.adStatus === 'PAUSED' ? 'Pausado' : creative.adStatus}</p>
+                    </div>
+                    {creative.creative.callToAction && (
+                      <div className="text-center p-2 bg-gray-50 rounded-lg">
+                        <p className="text-xs text-gray-500">CTA</p>
+                        <p className="text-xs font-bold text-gray-700 truncate">{creative.creative.callToAction.replace(/_/g, ' ')}</p>
+                      </div>
+                    )}
                   </div>
-                  <div className="text-center p-2 bg-gray-50 rounded-lg">
-                    <p className="text-xs text-gray-500">CPC</p>
-                    <p className="text-sm font-bold text-gray-900">R${creative.metrics.cpc.toFixed(2)}</p>
-                  </div>
-                  <div className="text-center p-2 bg-gray-50 rounded-lg">
-                    <p className="text-xs text-gray-500">Conv.</p>
-                    <p className="text-sm font-bold text-gray-900">{creative.metrics.conversions}</p>
-                  </div>
-                </div>
-
-                <div className="flex items-center justify-between mt-3 text-xs text-gray-400">
-                  <span>Freq: {creative.metrics.frequency.toFixed(1)}</span>
-                  <span>R$ {creative.metrics.spend.toLocaleString('pt-BR')} gasto</span>
-                </div>
+                )}
               </div>
             </div>
           )

@@ -4,7 +4,7 @@ import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContaine
 import { useApp } from '../contexts/AppContext'
 import { engine } from '../agents/engine'
 import { fetchMetaConfig, saveMetaConfig } from '../lib/supabase-data'
-import { syncCampaignsToSupabase } from '../lib/meta-api'
+import { syncCampaignsToSupabase, syncAdsToSupabase } from '../lib/meta-api'
 
 const objectiveColors: Record<string, string> = {
   LEADS: '#22c55e', SALES: '#3b82f6', TRAFFIC: '#a855f7', REGISTRATION: '#6366f1',
@@ -71,11 +71,10 @@ export default function Dashboard() {
       for (const company of companies) {
         const metaConfig = await fetchMetaConfig(company.id)
         if (!metaConfig || metaConfig.status !== 'connected') continue
+        const opts = { accessToken: metaConfig.accessToken, adAccountId: metaConfig.adAccountId }
         try {
-          await syncCampaignsToSupabase(company.id, {
-            accessToken: metaConfig.accessToken,
-            adAccountId: metaConfig.adAccountId,
-          })
+          await syncCampaignsToSupabase(company.id, opts)
+          await syncAdsToSupabase(company.id, opts)
         } catch { /* skip */ }
       }
       await refresh()
@@ -106,14 +105,16 @@ export default function Dashboard() {
         </div>
         <div className="flex items-center gap-2">
           <button
+            type="button"
             onClick={handleSyncAll}
             disabled={syncing || companies.length === 0}
             className="flex items-center gap-2 px-4 py-2 rounded-xl text-sm font-medium bg-gray-100 text-gray-700 hover:bg-gray-200 disabled:opacity-50"
           >
             {syncing ? <Loader2 size={14} className="animate-spin" /> : <RefreshCw size={14} />}
-            Sincronizar
+            {syncing ? 'Sincronizando...' : 'Sincronizar'}
           </button>
           <button
+            type="button"
             onClick={toggleEngine}
             disabled={loading || companies.length === 0}
             className={`flex items-center gap-2 px-4 py-2 rounded-xl text-sm font-medium transition-colors ${

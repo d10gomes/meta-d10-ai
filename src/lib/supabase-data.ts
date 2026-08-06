@@ -1,7 +1,29 @@
 import { supabase } from './supabase'
 import type { Company, CompanyGoal, CompanyAgent } from '../types/company'
 import type { AgentMessage, AgentAction, AgentMemory } from '../types/agent'
-import type { Campaign, MetaObjective, AdMetrics } from '../types/meta'
+import type { Campaign, MetaObjective, AdMetrics, Ad } from '../types/meta'
+
+// ==================== HELPERS ====================
+
+function distributeMetrics(campaignMetrics: AdMetrics, adCount: number): AdMetrics {
+  if (adCount <= 0 || campaignMetrics.spend === 0) {
+    return { impressions: 0, reach: 0, clicks: 0, ctr: 0, cpc: 0, cpm: 0, spend: 0, conversions: 0, costPerConversion: 0, roas: 0, frequency: 0 }
+  }
+  const share = 1 / adCount
+  return {
+    impressions: Math.round(campaignMetrics.impressions * share),
+    reach: Math.round(campaignMetrics.reach * share),
+    clicks: Math.round(campaignMetrics.clicks * share),
+    ctr: campaignMetrics.ctr,
+    cpc: campaignMetrics.cpc,
+    cpm: campaignMetrics.cpm,
+    spend: campaignMetrics.spend * share,
+    conversions: Math.round(campaignMetrics.conversions * share),
+    costPerConversion: campaignMetrics.costPerConversion,
+    roas: campaignMetrics.roas,
+    frequency: campaignMetrics.frequency,
+  }
+}
 
 // ==================== COMPANIES ====================
 
@@ -23,8 +45,18 @@ export async function fetchCompanies(): Promise<Company[]> {
   ])
 
   const campaignIds = (campaignsRes.data || []).map((c: Record<string, unknown>) => c.id as string)
-  const metricsRes = campaignIds.length > 0
-    ? await supabase.from('campaign_metrics').select('*').in('campaign_id', campaignIds).order('date', { ascending: false })
+  const [metricsRes, adsRes] = await Promise.all([
+    campaignIds.length > 0
+      ? supabase.from('campaign_metrics').select('*').in('campaign_id', campaignIds).order('date', { ascending: false })
+      : Promise.resolve({ data: [] }),
+    campaignIds.length > 0
+      ? supabase.from('ads').select('*').in('campaign_id', campaignIds)
+      : Promise.resolve({ data: [] }),
+  ])
+
+  const adIds = (adsRes.data || []).map((a: Record<string, unknown>) => a.id as string)
+  const adMetricsRes = adIds.length > 0
+    ? await supabase.from('ad_metrics').select('*').in('ad_id', adIds).order('date', { ascending: false })
     : { data: [] }
 
   return companies.map((c: Record<string, unknown>) => {
@@ -39,7 +71,19 @@ export async function fetchCompanies(): Promise<Company[]> {
       const latestMetrics = (metricsRes.data || [])
         .filter((m: Record<string, unknown>) => m.campaign_id === camp.id)
       const aggregated = aggregateMetrics(latestMetrics)
-      return mapCampaign(camp, aggregated)
+
+      const rawCampaignAds = (adsRes.data || [])
+        .filter((a: Record<string, unknown>) => a.campaign_id === camp.id)
+      const adCount = rawCampaignAds.length || 1
+      const campaignAds = rawCampaignAds.map((a: Record<string, unknown>) => {
+          const adMets = (adMetricsRes.data || [])
+            .filter((m: Record<string, unknown>) => m.ad_id === a.id)
+          const ownMetrics = aggregateAdMetrics(adMets)
+          const hasOwnMetrics = adMets.length > 0
+          return mapAd(a, hasOwnMetrics ? ownMetrics : distributeMetrics(aggregated, adCount))
+        })
+
+      return mapCampaign(camp, aggregated, campaignAds)
     })
 
     const agents = (agentsRes.data || [])
@@ -357,7 +401,7 @@ function mapGoal(raw: Record<string, unknown>): CompanyGoal {
   }
 }
 
-function mapCampaign(raw: Record<string, unknown>, metrics: AdMetrics): Campaign {
+function mapCampaign(raw: Record<string, unknown>, metrics: AdMetrics, ads: Ad[] = []): Campaign {
   return {
     id: raw.id as string,
     companyId: raw.company_id as string,
@@ -369,11 +413,59 @@ function mapCampaign(raw: Record<string, unknown>, metrics: AdMetrics): Campaign
     startDate: raw.start_date as string,
     endDate: raw.end_date as string | undefined,
     adSets: [],
-    ads: [],
+    ads,
     metrics,
     agentId: raw.agent_id as string || '',
     automationEnabled: raw.automation_enabled as boolean || false,
     rules: [],
+  }
+}
+
+function mapAd(raw: Record<string, unknown>, metrics: AdMetrics): Ad {
+  return {
+    id: raw.id as string,
+    name: raw.name as string || '',
+    status: (raw.status as 'ACTIVE' | 'PAUSED' | 'DELETED') || 'ACTIVE',
+    creative: {
+      id: raw.meta_ad_id as string || '',
+      type: (raw.creative_type as 'IMAGE' | 'VIDEO' | 'CAROUSEL' | 'COLLECTION') || 'IMAGE',
+      headline: raw.headline as string || '',
+      description: raw.description as string || '',
+      callToAction: raw.call_to_action as string || '',
+      mediaUrl: raw.media_url as string || '',
+      thumbnailUrl: raw.thumbnail_url as string || '',
+    },
+    metrics,
+  }
+}
+
+function aggregateAdMetrics(rows: Record<string, unknown>[]): AdMetrics {
+  if (rows.length === 0) {
+    return { impressions: 0, reach: 0, clicks: 0, ctr: 0, cpc: 0, cpm: 0, spend: 0, conversions: 0, costPerConversion: 0, roas: 0, frequency: 0 }
+  }
+  const totals = rows.reduce(
+    (acc, r) => ({
+      impressions: acc.impressions + (r.impressions as number || 0),
+      reach: acc.reach + (r.reach as number || 0),
+      clicks: acc.clicks + (r.clicks as number || 0),
+      spend: acc.spend + (r.spend as number || 0),
+      conversions: acc.conversions + (r.conversions as number || 0),
+      revenue: acc.revenue + (r.revenue as number || 0),
+    }),
+    { impressions: 0, reach: 0, clicks: 0, spend: 0, conversions: 0, revenue: 0 }
+  )
+  return {
+    impressions: totals.impressions,
+    reach: totals.reach,
+    clicks: totals.clicks,
+    ctr: totals.impressions > 0 ? (totals.clicks / totals.impressions) * 100 : 0,
+    cpc: totals.clicks > 0 ? totals.spend / totals.clicks : 0,
+    cpm: totals.impressions > 0 ? (totals.spend / totals.impressions) * 1000 : 0,
+    spend: totals.spend,
+    conversions: totals.conversions,
+    costPerConversion: totals.conversions > 0 ? totals.spend / totals.conversions : 0,
+    roas: totals.spend > 0 ? totals.revenue / totals.spend : 0,
+    frequency: totals.reach > 0 ? totals.impressions / totals.reach : 0,
   }
 }
 
