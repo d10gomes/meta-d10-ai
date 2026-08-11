@@ -183,6 +183,7 @@ export interface AdMetrics {
 export interface Campaign {
   id: string
   companyId: string
+  metaCampaignId?: string
   name: string
   objective: MetaObjective
   status: 'ACTIVE' | 'PAUSED' | 'DRAFT' | 'ARCHIVED'

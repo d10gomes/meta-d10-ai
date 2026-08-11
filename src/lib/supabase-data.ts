@@ -178,12 +178,20 @@ export async function fetchCampaigns(companyId?: string) {
   })
 }
 
-export async function updateCampaignStatus(id: string, status: string) {
+export async function updateCampaignStatus(id: string, status: string, metaOpts?: { accessToken: string; adAccountId: string; metaCampaignId: string }) {
+  if (metaOpts?.metaCampaignId) {
+    const { updateMetaCampaign } = await import('./meta-api')
+    await updateMetaCampaign(metaOpts, metaOpts.metaCampaignId, { status })
+  }
   const { error } = await supabase.from('campaigns').update({ status }).eq('id', id)
   if (error) throw error
 }
 
-export async function updateCampaignBudget(id: string, budget: number) {
+export async function updateCampaignBudget(id: string, budget: number, metaOpts?: { accessToken: string; adAccountId: string; metaCampaignId: string }) {
+  if (metaOpts?.metaCampaignId) {
+    const { updateMetaCampaign } = await import('./meta-api')
+    await updateMetaCampaign(metaOpts, metaOpts.metaCampaignId, { dailyBudget: budget })
+  }
   const { error } = await supabase.from('campaigns').update({ budget }).eq('id', id)
   if (error) throw error
 }
@@ -405,6 +413,7 @@ function mapCampaign(raw: Record<string, unknown>, metrics: AdMetrics, ads: Ad[]
   return {
     id: raw.id as string,
     companyId: raw.company_id as string,
+    metaCampaignId: raw.meta_campaign_id as string | undefined,
     name: raw.name as string,
     objective: raw.objective as MetaObjective,
     status: raw.status as 'ACTIVE' | 'PAUSED' | 'DRAFT' | 'ARCHIVED',
