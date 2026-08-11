@@ -1,9 +1,9 @@
 import { useState, useMemo } from 'react'
 import {
   BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer,
-  LineChart, Line, AreaChart, Area, PieChart, Pie, Cell, Legend,
+  PieChart, Pie, Cell,
 } from 'recharts'
-import { TrendingUp, TrendingDown, DollarSign, MousePointerClick, Eye, Target } from 'lucide-react'
+import { TrendingUp, DollarSign, MousePointerClick, Eye, Target } from 'lucide-react'
 import { useApp } from '../contexts/AppContext'
 
 type Period = '7d' | '14d' | '30d' | 'all'

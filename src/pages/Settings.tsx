@@ -13,8 +13,10 @@ const defaultAgentRoles: AgentRole[] = [
 ]
 
 export default function Settings() {
-  const { companies, refresh } = useApp()
-  const [selectedCompanyId, setSelectedCompanyId] = useState(companies[0]?.id || '')
+  const { companies, refresh, selectedCompanyId: globalCompanyId } = useApp()
+  const [localCompanyId, setLocalCompanyId] = useState(globalCompanyId || companies[0]?.id || '')
+  const selectedCompanyId = localCompanyId
+  const setSelectedCompanyId = setLocalCompanyId
   const [config, setConfig] = useState({
     appId: '', appSecret: '', accessToken: '', adAccountId: '',
     pixelId: '', pageId: '', whatsappBusinessId: '',
@@ -33,6 +35,10 @@ export default function Settings() {
   const [maxDailyBudget, setMaxDailyBudget] = useState('500')
   const [maxBudgetIncrease, setMaxBudgetIncrease] = useState('30')
   const [minRoas, setMinRoas] = useState('2.0')
+
+  useEffect(() => {
+    if (globalCompanyId) setLocalCompanyId(globalCompanyId)
+  }, [globalCompanyId])
 
   useEffect(() => {
     if (!selectedCompanyId) return

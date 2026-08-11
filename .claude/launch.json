@@ -5,7 +5,8 @@
       "name": "dev",
       "runtimeExecutable": "C:\\Program Files\\nodejs\\npx.cmd",
       "runtimeArgs": ["vite", "--host"],
-      "port": 5173
+      "port": 5173,
+      "autoPort": true
     }
   ]
 }

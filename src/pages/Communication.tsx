@@ -25,22 +25,31 @@ const priorityColors = {
 }
 
 export default function Communication() {
-  const { messages } = useApp()
+  const { messages, selectedCompanyId, companies } = useApp()
 
-  const sortedMessages = [...messages].reverse()
-  const criticalCount = messages.filter(m => m.priority === 'critical' && !m.read).length
-  const highCount = messages.filter(m => m.priority === 'high' && !m.read).length
+  const filteredMessages = selectedCompanyId
+    ? messages.filter(m => {
+        const company = companies.find(c => c.id === selectedCompanyId)
+        if (!company) return false
+        const companyAgentIds = company.agents.map(a => a.id)
+        return companyAgentIds.includes(m.from) || companyAgentIds.includes(m.to)
+      })
+    : messages
+
+  const sortedMessages = [...filteredMessages].reverse()
+  const criticalCount = filteredMessages.filter(m => m.priority === 'critical' && !m.read).length
+  const highCount = filteredMessages.filter(m => m.priority === 'high' && !m.read).length
 
   return (
     <div className="space-y-6">
       <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
         <div className="bg-white rounded-2xl p-5 shadow-sm border border-gray-100">
           <p className="text-sm text-gray-500">Total de Mensagens</p>
-          <p className="text-3xl font-bold text-gray-900 mt-1">{messages.length}</p>
+          <p className="text-3xl font-bold text-gray-900 mt-1">{filteredMessages.length}</p>
         </div>
         <div className="bg-white rounded-2xl p-5 shadow-sm border border-gray-100">
           <p className="text-sm text-gray-500">Nao Lidas</p>
-          <p className="text-3xl font-bold text-blue-600 mt-1">{messages.filter(m => !m.read).length}</p>
+          <p className="text-3xl font-bold text-blue-600 mt-1">{filteredMessages.filter(m => !m.read).length}</p>
         </div>
         <div className="bg-white rounded-2xl p-5 shadow-sm border border-gray-100">
           <p className="text-sm text-gray-500">Alertas Criticos</p>

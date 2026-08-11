@@ -16,7 +16,7 @@ interface AppContextType {
   setActivePage: (page: string) => void
   totalBudget: number
   totalLeads: number
-  totalROAS: number
+  avgROAS: number
   activeAgents: number
   loading: boolean
   error: string | null
@@ -54,7 +54,6 @@ export function AppProvider({ children }: { children: ReactNode }) {
     } catch (err) {
       console.error('Erro ao carregar dados do Supabase:', err)
       setError('Erro ao conectar com o Supabase. Verifique a conexao.')
-      setDataSource('supabase')
     } finally {
       setLoading(false)
     }
@@ -112,7 +111,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
         setActivePage,
         totalBudget,
         totalLeads,
-        totalROAS: avgROAS,
+        avgROAS,
         activeAgents,
         loading,
         error,

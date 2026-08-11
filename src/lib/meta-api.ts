@@ -46,8 +46,8 @@ export async function createMetaCampaign(opts: MetaApiOptions, campaign: {
     access_token: accessToken,
   }
 
-  if (campaign.dailyBudget) body.daily_budget = String(Math.round(campaign.dailyBudget * 100))
-  if (campaign.lifetimeBudget) body.lifetime_budget = String(Math.round(campaign.lifetimeBudget * 100))
+  if (campaign.dailyBudget !== undefined) body.daily_budget = String(Math.round(campaign.dailyBudget * 100))
+  if (campaign.lifetimeBudget !== undefined) body.lifetime_budget = String(Math.round(campaign.lifetimeBudget * 100))
   if (campaign.bidStrategy) body.bid_strategy = campaign.bidStrategy
   if (campaign.specialAdCategories) body.special_ad_categories = JSON.stringify(campaign.specialAdCategories)
 
@@ -70,7 +70,7 @@ export async function updateMetaCampaign(opts: MetaApiOptions, campaignId: strin
   const body: Record<string, string> = { access_token: opts.accessToken }
   if (updates.name) body.name = updates.name
   if (updates.status) body.status = updates.status
-  if (updates.dailyBudget) body.daily_budget = String(Math.round(updates.dailyBudget * 100))
+  if (updates.dailyBudget !== undefined) body.daily_budget = String(Math.round(updates.dailyBudget * 100))
   if (updates.bidStrategy) body.bid_strategy = updates.bidStrategy
 
   const res = await fetch(`${META_GRAPH_URL}/${campaignId}`, {
@@ -101,12 +101,18 @@ export async function getMetaAdSets(opts: MetaApiOptions, campaignId?: string) {
   const parentId = campaignId || (adAccountId.startsWith('act_') ? adAccountId : `act_${adAccountId}`)
   const endpoint = campaignId ? `${campaignId}/adsets` : `${parentId}/adsets`
 
-  const res = await fetch(
-    `${META_GRAPH_URL}/${endpoint}?fields=id,name,status,daily_budget,lifetime_budget,targeting,optimization_goal,billing_event,bid_amount,start_time,end_time&access_token=${accessToken}`
-  )
-  const data = await res.json()
-  if (data.error) throw new MetaApiError(data.error)
-  return data.data || []
+  let all: Record<string, unknown>[] = []
+  let url: string | null = `${META_GRAPH_URL}/${endpoint}?fields=id,name,status,daily_budget,lifetime_budget,targeting,optimization_goal,billing_event,bid_amount,start_time,end_time&limit=100&access_token=${accessToken}`
+
+  while (url) {
+    const res = await fetch(url)
+    if (!res.ok) throw new MetaApiError({ message: `HTTP ${res.status}`, code: res.status, type: 'OAuthException', fbtrace_id: '' })
+    const data = await res.json()
+    if (data.error) throw new MetaApiError(data.error)
+    all = all.concat(data.data || [])
+    url = data.paging?.next || null
+  }
+  return all
 }
 
 export async function createMetaAdSet(opts: MetaApiOptions, adSet: {
@@ -134,8 +140,8 @@ export async function createMetaAdSet(opts: MetaApiOptions, adSet: {
     access_token: accessToken,
   }
 
-  if (adSet.dailyBudget) body.daily_budget = String(Math.round(adSet.dailyBudget * 100))
-  if (adSet.bidAmount) body.bid_amount = String(Math.round(adSet.bidAmount * 100))
+  if (adSet.dailyBudget !== undefined) body.daily_budget = String(Math.round(adSet.dailyBudget * 100))
+  if (adSet.bidAmount !== undefined) body.bid_amount = String(Math.round(adSet.bidAmount * 100))
   if (adSet.startTime) body.start_time = adSet.startTime
   if (adSet.endTime) body.end_time = adSet.endTime
 
@@ -159,8 +165,8 @@ export async function updateMetaAdSet(opts: MetaApiOptions, adSetId: string, upd
   const body: Record<string, string> = { access_token: opts.accessToken }
   if (updates.name) body.name = updates.name
   if (updates.status) body.status = updates.status
-  if (updates.dailyBudget) body.daily_budget = String(Math.round(updates.dailyBudget * 100))
-  if (updates.bidAmount) body.bid_amount = String(Math.round(updates.bidAmount * 100))
+  if (updates.dailyBudget !== undefined) body.daily_budget = String(Math.round(updates.dailyBudget * 100))
+  if (updates.bidAmount !== undefined) body.bid_amount = String(Math.round(updates.bidAmount * 100))
   if (updates.targeting) body.targeting = JSON.stringify(updates.targeting)
 
   const res = await fetch(`${META_GRAPH_URL}/${adSetId}`, {
@@ -180,12 +186,18 @@ export async function getMetaAds(opts: MetaApiOptions, adSetId?: string) {
   const parentId = adSetId || (adAccountId.startsWith('act_') ? adAccountId : `act_${adAccountId}`)
   const endpoint = adSetId ? `${adSetId}/ads` : `${parentId}/ads`
 
-  const res = await fetch(
-    `${META_GRAPH_URL}/${endpoint}?fields=id,name,status,creative{id,title,body,image_url,video_id,call_to_action_type,thumbnail_url}&access_token=${accessToken}`
-  )
-  const data = await res.json()
-  if (data.error) throw new MetaApiError(data.error)
-  return data.data || []
+  let all: Record<string, unknown>[] = []
+  let url: string | null = `${META_GRAPH_URL}/${endpoint}?fields=id,name,status,creative{id,title,body,image_url,video_id,call_to_action_type,thumbnail_url}&limit=100&access_token=${accessToken}`
+
+  while (url) {
+    const res = await fetch(url)
+    if (!res.ok) throw new MetaApiError({ message: `HTTP ${res.status}`, code: res.status, type: 'OAuthException', fbtrace_id: '' })
+    const data = await res.json()
+    if (data.error) throw new MetaApiError(data.error)
+    all = all.concat(data.data || [])
+    url = data.paging?.next || null
+  }
+  return all
 }
 
 // ==================== INSIGHTS / MÉTRICAS ====================
@@ -262,12 +274,18 @@ export async function getCustomAudiences(opts: MetaApiOptions) {
   const { accessToken, adAccountId } = opts
   const accountId = adAccountId.startsWith('act_') ? adAccountId : `act_${adAccountId}`
 
-  const res = await fetch(
-    `${META_GRAPH_URL}/${accountId}/customaudiences?fields=id,name,subtype,approximate_count,delivery_status,operation_status&access_token=${accessToken}`
-  )
-  const data = await res.json()
-  if (data.error) throw new MetaApiError(data.error)
-  return data.data || []
+  let all: Record<string, unknown>[] = []
+  let url: string | null = `${META_GRAPH_URL}/${accountId}/customaudiences?fields=id,name,subtype,approximate_count,delivery_status,operation_status&limit=100&access_token=${accessToken}`
+
+  while (url) {
+    const res = await fetch(url)
+    if (!res.ok) throw new MetaApiError({ message: `HTTP ${res.status}`, code: res.status, type: 'OAuthException', fbtrace_id: '' })
+    const data = await res.json()
+    if (data.error) throw new MetaApiError(data.error)
+    all = all.concat(data.data || [])
+    url = data.paging?.next || null
+  }
+  return all
 }
 
 export async function createLookalikeAudience(opts: MetaApiOptions, params: {
@@ -324,12 +342,18 @@ export async function validateAccessToken(accessToken: string) {
 }
 
 export async function getAdAccounts(accessToken: string) {
-  const res = await fetch(
-    `${META_GRAPH_URL}/me/adaccounts?fields=id,name,account_status,currency,timezone_name,amount_spent&access_token=${accessToken}`
-  )
-  const data = await res.json()
-  if (data.error) throw new MetaApiError(data.error)
-  return data.data || []
+  let all: Record<string, unknown>[] = []
+  let url: string | null = `${META_GRAPH_URL}/me/adaccounts?fields=id,name,account_status,currency,timezone_name,amount_spent&limit=100&access_token=${accessToken}`
+
+  while (url) {
+    const res = await fetch(url)
+    if (!res.ok) throw new MetaApiError({ message: `HTTP ${res.status}`, code: res.status, type: 'OAuthException', fbtrace_id: '' })
+    const data = await res.json()
+    if (data.error) throw new MetaApiError(data.error)
+    all = all.concat(data.data || [])
+    url = data.paging?.next || null
+  }
+  return all
 }
 
 // ==================== SYNC: META -> SUPABASE ====================
@@ -461,12 +485,11 @@ export async function syncAdsToSupabase(companyId: string, opts: MetaApiOptions)
 
         if (error) console.error(`Erro ao upsert ad ${ad.id}:`, error.message)
       }
-    } catch {
-      // skip campaign if ad fetch fails
+    } catch (err) {
+      console.error(`Erro ao buscar ads da campanha ${camp.meta_campaign_id}:`, err)
     }
   }
 
-  // Fetch campaign insights from Meta and distribute across ads
   for (const camp of campaigns) {
     try {
       const { data: campAds } = await supabase
@@ -539,19 +562,25 @@ export async function syncAdsToSupabase(companyId: string, opts: MetaApiOptions)
           revenue: adRevenue,
         }, { onConflict: 'ad_id,date' })
       }
-    } catch {
-      // skip campaign if insights fetch fails
+    } catch (err) {
+      console.error(`Erro ao buscar insights da campanha ${camp.meta_campaign_id}:`, err)
     }
   }
 }
 
 async function fetchCampaignAds(opts: MetaApiOptions, campaignId: string) {
-  const res = await fetch(
-    `${META_GRAPH_URL}/${campaignId}/ads?fields=id,name,status,creative{id,title,body,image_url,video_id,call_to_action_type,thumbnail_url}&limit=100&access_token=${opts.accessToken}`
-  )
-  const data = await res.json()
-  if (data.error) return []
-  return data.data || []
+  let all: Record<string, unknown>[] = []
+  let url: string | null = `${META_GRAPH_URL}/${campaignId}/ads?fields=id,name,status,creative{id,title,body,image_url,video_id,call_to_action_type,thumbnail_url}&limit=100&access_token=${opts.accessToken}`
+
+  while (url) {
+    const res = await fetch(url)
+    if (!res.ok) return all
+    const data = await res.json()
+    if (data.error) return all
+    all = all.concat(data.data || [])
+    url = data.paging?.next || null
+  }
+  return all
 }
 
 // ==================== HELPERS ====================

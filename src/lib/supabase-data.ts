@@ -78,7 +78,7 @@ export async function fetchCompanies(): Promise<Company[]> {
       const campaignAds = rawCampaignAds.map((a: Record<string, unknown>) => {
           const adMets = (adMetricsRes.data || [])
             .filter((m: Record<string, unknown>) => m.ad_id === a.id)
-          const ownMetrics = aggregateAdMetrics(adMets)
+          const ownMetrics = aggregateMetrics(adMets)
           const hasOwnMetrics = adMets.length > 0
           return mapAd(a, hasOwnMetrics ? ownMetrics : distributeMetrics(aggregated, adCount))
         })
@@ -448,35 +448,6 @@ function mapAd(raw: Record<string, unknown>, metrics: AdMetrics): Ad {
   }
 }
 
-function aggregateAdMetrics(rows: Record<string, unknown>[]): AdMetrics {
-  if (rows.length === 0) {
-    return { impressions: 0, reach: 0, clicks: 0, ctr: 0, cpc: 0, cpm: 0, spend: 0, conversions: 0, costPerConversion: 0, roas: 0, frequency: 0 }
-  }
-  const totals = rows.reduce(
-    (acc, r) => ({
-      impressions: acc.impressions + (r.impressions as number || 0),
-      reach: acc.reach + (r.reach as number || 0),
-      clicks: acc.clicks + (r.clicks as number || 0),
-      spend: acc.spend + (r.spend as number || 0),
-      conversions: acc.conversions + (r.conversions as number || 0),
-      revenue: acc.revenue + (r.revenue as number || 0),
-    }),
-    { impressions: 0, reach: 0, clicks: 0, spend: 0, conversions: 0, revenue: 0 }
-  )
-  return {
-    impressions: totals.impressions,
-    reach: totals.reach,
-    clicks: totals.clicks,
-    ctr: totals.impressions > 0 ? (totals.clicks / totals.impressions) * 100 : 0,
-    cpc: totals.clicks > 0 ? totals.spend / totals.clicks : 0,
-    cpm: totals.impressions > 0 ? (totals.spend / totals.impressions) * 1000 : 0,
-    spend: totals.spend,
-    conversions: totals.conversions,
-    costPerConversion: totals.conversions > 0 ? totals.spend / totals.conversions : 0,
-    roas: totals.spend > 0 ? totals.revenue / totals.spend : 0,
-    frequency: totals.reach > 0 ? totals.impressions / totals.reach : 0,
-  }
-}
 
 function mapAgent(raw: Record<string, unknown>): CompanyAgent {
   return {

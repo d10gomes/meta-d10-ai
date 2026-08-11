@@ -1,4 +1,4 @@
-import { DollarSign, TrendingUp, ArrowUpRight, ArrowDownRight } from 'lucide-react'
+import { DollarSign, TrendingUp, ArrowUpRight } from 'lucide-react'
 import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Cell } from 'recharts'
 import { useApp } from '../contexts/AppContext'
 

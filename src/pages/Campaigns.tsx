@@ -1,5 +1,5 @@
 import { useState, useMemo } from 'react'
-import { Plus, Circle, MessageCircle, ShoppingCart, ExternalLink, UserPlus, Smartphone, Eye, Heart, Filter, Play, Pause, TrendingUp, Loader2, DollarSign, Target, MousePointerClick, BarChart3, AlertTriangle, X, Check } from 'lucide-react'
+import { Circle, MessageCircle, ShoppingCart, ExternalLink, UserPlus, Smartphone, Eye, Heart, Filter, Play, Pause, TrendingUp, Loader2, DollarSign, Target, MousePointerClick, BarChart3, AlertTriangle, X, Check } from 'lucide-react'
 import { useApp } from '../contexts/AppContext'
 import { updateCampaignStatus, updateCampaignBudget, fetchMetaConfig } from '../lib/supabase-data'
 import type { MetaObjective } from '../types/meta'
