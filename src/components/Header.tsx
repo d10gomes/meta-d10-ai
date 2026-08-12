@@ -1,5 +1,6 @@
-import { Bell, Search, ChevronDown } from 'lucide-react'
+import { Bell, Search, ChevronDown, LogOut } from 'lucide-react'
 import { useApp } from '../contexts/AppContext'
+import { useAuth } from '../contexts/AuthContext'
 
 const pageTitles: Record<string, string> = {
   dashboard: 'Dashboard',
@@ -16,12 +17,26 @@ const pageTitles: Record<string, string> = {
   settings: 'Configuracoes',
 }
 
+function getInitials(name?: string, email?: string): string {
+  if (name) {
+    const parts = name.trim().split(/\s+/)
+    if (parts.length >= 2) return (parts[0][0] + parts[parts.length - 1][0]).toUpperCase()
+    return parts[0].substring(0, 2).toUpperCase()
+  }
+  if (email) return email.substring(0, 2).toUpperCase()
+  return '??'
+}
+
 export default function Header() {
   const { activePage, companies, selectedCompanyId, setSelectedCompanyId, messages } = useApp()
+  const { user, signOut } = useAuth()
   const title = pageTitles[activePage] || ''
   const selectedCompany = companies.find(c => c.id === selectedCompanyId)
   const subtitle = selectedCompany ? selectedCompany.name : 'Todas as empresas'
   const unreadCount = messages.filter(m => !m.read).length
+
+  const userName = user?.user_metadata?.full_name || user?.email?.split('@')[0] || ''
+  const initials = getInitials(user?.user_metadata?.full_name, user?.email)
 
   return (
     <header className="bg-white border-b border-gray-100 px-8 py-4 flex items-center justify-between sticky top-0 z-10">
@@ -66,8 +81,21 @@ export default function Header() {
           )}
         </button>
 
-        <div className="w-9 h-9 bg-gradient-to-br from-blue-500 to-purple-600 rounded-xl flex items-center justify-center text-white font-bold text-sm">
-          DG
+        <div className="flex items-center gap-2">
+          <div className="w-9 h-9 bg-gradient-to-br from-blue-500 to-purple-600 rounded-xl flex items-center justify-center text-white font-bold text-sm">
+            {initials}
+          </div>
+          <div className="hidden md:block">
+            <p className="text-sm font-medium text-gray-900 leading-tight">{userName}</p>
+            <p className="text-xs text-gray-500 leading-tight">{user?.email}</p>
+          </div>
+          <button
+            onClick={signOut}
+            className="p-2 text-gray-400 hover:text-red-600 hover:bg-red-50 rounded-xl transition-colors"
+            title="Sair"
+          >
+            <LogOut size={18} />
+          </button>
         </div>
       </div>
     </header>
