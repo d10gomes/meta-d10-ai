@@ -371,6 +371,35 @@ export async function toggleAutomationRule(id: string, enabled: boolean) {
   if (error) throw error
 }
 
+export async function updateAutomationRule(id: string, updates: {
+  name?: string
+  agentRole?: string
+  metric?: string
+  operator?: string
+  threshold?: number
+  action?: string
+  actionParams?: Record<string, unknown>
+}) {
+  const mapped: Record<string, unknown> = {}
+  if (updates.name !== undefined) mapped.name = updates.name
+  if (updates.agentRole !== undefined) mapped.agent_role = updates.agentRole
+  if (updates.metric !== undefined) mapped.metric = updates.metric
+  if (updates.operator !== undefined) mapped.operator = updates.operator
+  if (updates.threshold !== undefined) mapped.threshold = updates.threshold
+  if (updates.action !== undefined) mapped.action_type = updates.action
+  if (updates.actionParams !== undefined) mapped.action_params = updates.actionParams
+  if (updates.metric || updates.operator || updates.threshold !== undefined) {
+    mapped.condition_type = `${updates.metric || ''} ${updates.operator || ''} ${updates.threshold ?? ''}`
+  }
+  const { error } = await supabase.from('automation_rules').update(mapped).eq('id', id)
+  if (error) throw error
+}
+
+export async function deleteAutomationRule(id: string) {
+  const { error } = await supabase.from('automation_rules').delete().eq('id', id)
+  if (error) throw error
+}
+
 // ==================== MAPPERS ====================
 
 function mapCompany(
