@@ -1,10 +1,9 @@
 import { useState, useEffect, useMemo } from 'react'
-import { DollarSign, Users, TrendingUp, Zap, Play, Pause, Cloud, Eye, MousePointerClick, Target, BarChart3, RefreshCw, Loader2, ChevronRight } from 'lucide-react'
+import { DollarSign, Users, TrendingUp, Zap, Play, Pause, Cloud, Eye, MousePointerClick, Target, BarChart3, RefreshCw, Loader2, ChevronRight, Timer } from 'lucide-react'
 import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, PieChart, Pie, Cell } from 'recharts'
 import { useApp } from '../contexts/AppContext'
 import { engine } from '../agents/engine'
-import { fetchMetaConfig, saveMetaConfig } from '../lib/supabase-data'
-import { syncCampaignsToSupabase, syncAdsToSupabase } from '../lib/meta-api'
+import { syncService, type SyncStatus } from '../lib/sync-service'
 
 const objectiveColors: Record<string, string> = {
   LEADS: '#22c55e', SALES: '#3b82f6', TRAFFIC: '#a855f7', REGISTRATION: '#6366f1',
@@ -15,6 +14,8 @@ export default function Dashboard() {
   const { companies, selectedCompanyId, setSelectedCompanyId, setActivePage, actions, loading, refresh } = useApp()
   const [engineRunning, setEngineRunning] = useState(false)
   const [syncing, setSyncing] = useState(false)
+  const [syncStatus, setSyncStatus] = useState<SyncStatus>(syncService.getStatus())
+  const [autoSyncOn, setAutoSyncOn] = useState(syncService.isRunning())
 
   const displayCompanies = selectedCompanyId
     ? companies.filter(c => c.id === selectedCompanyId)
@@ -65,71 +66,105 @@ export default function Dashboard() {
     }
   }
 
-  const companiesToSync = selectedCompanyId
-    ? companies.filter(c => c.id === selectedCompanyId)
-    : companies
-
-  const handleSyncAll = async () => {
+  const handleSyncNow = async () => {
     setSyncing(true)
     try {
-      for (const company of companiesToSync) {
-        const metaConfig = await fetchMetaConfig(company.id)
-        if (!metaConfig || metaConfig.status !== 'connected') continue
-        const opts = { accessToken: metaConfig.accessToken, adAccountId: metaConfig.adAccountId }
-        try {
-          await syncCampaignsToSupabase(company.id, opts)
-          await syncAdsToSupabase(company.id, opts)
-        } catch { /* skip */ }
-      }
+      await syncService.syncAll()
       await refresh()
     } catch { /* skip */ }
     setSyncing(false)
   }
 
+  const toggleAutoSync = () => {
+    if (autoSyncOn) {
+      syncService.stop()
+      setAutoSyncOn(false)
+    } else {
+      syncService.start(600000)
+      setAutoSyncOn(true)
+    }
+  }
+
   useEffect(() => {
-    return () => { engine.stop() }
-  }, [])
+    const unsub = syncService.subscribe((status) => {
+      setSyncStatus(status)
+      if (status.lastResult?.success) refresh()
+    })
+    return () => { unsub(); engine.stop() }
+  }, [refresh])
 
   const recentActions = actions.slice(-5).reverse()
 
   return (
     <div className="space-y-6">
       {/* TOP BAR: Engine + Sync */}
-      <div className="flex items-center justify-between p-4 bg-white rounded-2xl shadow-sm border border-gray-100">
-        <div className="flex items-center gap-4">
-          <div className={`w-3 h-3 rounded-full ${engineRunning ? 'bg-green-500 animate-pulse' : 'bg-gray-300'}`} />
-          <div>
-            <p className="text-sm font-semibold text-gray-900">
-              Motor de Agentes {engineRunning ? 'Ativo' : 'Pausado'}
-            </p>
-            <p className="text-xs text-gray-500">
-              {engineRunning ? `Monitorando ${activeCampaigns.length} campanhas ativas` : 'Clique para ativar a orquestra'}
-            </p>
+      <div className="flex flex-col gap-3 p-4 bg-white rounded-2xl shadow-sm border border-gray-100">
+        <div className="flex items-center justify-between">
+          <div className="flex items-center gap-4">
+            <div className={`w-3 h-3 rounded-full ${engineRunning ? 'bg-green-500 animate-pulse' : 'bg-gray-300'}`} />
+            <div>
+              <p className="text-sm font-semibold text-gray-900">
+                Motor de Agentes {engineRunning ? 'Ativo' : 'Pausado'}
+              </p>
+              <p className="text-xs text-gray-500">
+                {engineRunning ? `Monitorando ${activeCampaigns.length} campanhas ativas` : 'Clique para ativar a orquestra'}
+              </p>
+            </div>
+          </div>
+          <div className="flex items-center gap-2">
+            <button
+              type="button"
+              onClick={handleSyncNow}
+              disabled={syncing || companies.length === 0}
+              className="flex items-center gap-2 px-4 py-2 rounded-xl text-sm font-medium bg-gray-100 text-gray-700 hover:bg-gray-200 disabled:opacity-50"
+            >
+              {syncing ? <Loader2 size={14} className="animate-spin" /> : <RefreshCw size={14} />}
+              {syncing ? 'Sincronizando...' : 'Sync Agora'}
+            </button>
+            <button
+              type="button"
+              onClick={toggleAutoSync}
+              disabled={companies.length === 0}
+              className={`flex items-center gap-2 px-4 py-2 rounded-xl text-sm font-medium transition-colors ${
+                autoSyncOn
+                  ? 'bg-green-50 text-green-700 hover:bg-green-100 border border-green-200'
+                  : 'bg-gray-50 text-gray-600 hover:bg-gray-100 border border-gray-200'
+              } disabled:opacity-50`}
+            >
+              <Timer size={14} />
+              {autoSyncOn ? 'Auto-Sync On' : 'Auto-Sync Off'}
+            </button>
+            <button
+              type="button"
+              onClick={toggleEngine}
+              disabled={loading || companies.length === 0}
+              className={`flex items-center gap-2 px-4 py-2 rounded-xl text-sm font-medium transition-colors ${
+                engineRunning
+                  ? 'bg-red-50 text-red-600 hover:bg-red-100'
+                  : 'bg-blue-600 text-white hover:bg-blue-700'
+              } disabled:opacity-50`}
+            >
+              {engineRunning ? <><Pause size={14} /> Pausar</> : <><Play size={14} /> Ativar Agentes</>}
+            </button>
           </div>
         </div>
-        <div className="flex items-center gap-2">
-          <button
-            type="button"
-            onClick={handleSyncAll}
-            disabled={syncing || companies.length === 0}
-            className="flex items-center gap-2 px-4 py-2 rounded-xl text-sm font-medium bg-gray-100 text-gray-700 hover:bg-gray-200 disabled:opacity-50"
-          >
-            {syncing ? <Loader2 size={14} className="animate-spin" /> : <RefreshCw size={14} />}
-            {syncing ? 'Sincronizando...' : selectedCompanyId ? 'Sincronizar Empresa' : 'Sincronizar Todas'}
-          </button>
-          <button
-            type="button"
-            onClick={toggleEngine}
-            disabled={loading || companies.length === 0}
-            className={`flex items-center gap-2 px-4 py-2 rounded-xl text-sm font-medium transition-colors ${
-              engineRunning
-                ? 'bg-red-50 text-red-600 hover:bg-red-100'
-                : 'bg-blue-600 text-white hover:bg-blue-700'
-            } disabled:opacity-50`}
-          >
-            {engineRunning ? <><Pause size={14} /> Pausar</> : <><Play size={14} /> Ativar Agentes</>}
-          </button>
-        </div>
+        {syncStatus.lastSyncAt && (
+          <div className="flex items-center gap-4 text-xs text-gray-500 pl-7">
+            <span>
+              Ultimo sync: {new Date(syncStatus.lastSyncAt).toLocaleTimeString('pt-BR')}
+              {syncStatus.lastResult && (
+                <> — {syncStatus.lastResult.companiesSynced} empresa(s), {syncStatus.lastResult.campaignsSynced} campanhas
+                  {syncStatus.lastResult.errors.length > 0 && (
+                    <span className="text-red-500 ml-1">({syncStatus.lastResult.errors.length} erro{syncStatus.lastResult.errors.length > 1 ? 's' : ''})</span>
+                  )}
+                </>
+              )}
+            </span>
+            {syncStatus.nextSyncAt && (
+              <span>Proximo: {new Date(syncStatus.nextSyncAt).toLocaleTimeString('pt-BR')}</span>
+            )}
+          </div>
+        )}
       </div>
 
       {/* EMPTY STATE */}
