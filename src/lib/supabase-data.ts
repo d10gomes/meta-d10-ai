@@ -400,6 +400,20 @@ export async function deleteAutomationRule(id: string) {
   if (error) throw error
 }
 
+// ==================== TASKS ====================
+
+export { createTask, startTask, completeTask, failTask, fetchRecentTasks } from './task-engine'
+export type { Task } from './task-engine'
+
+// ==================== POLICIES ====================
+
+export { fetchPolicies, updatePolicy, checkPermission, setCooldown } from './permission-engine'
+export type { Policy, PermissionResult, AutonomyLevel } from './permission-engine'
+
+// ==================== JOURNEY LOG ====================
+
+export { journeyLog } from './journey-log'
+
 // ==================== MAPPERS ====================
 
 function mapCompany(

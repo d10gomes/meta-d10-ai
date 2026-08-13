@@ -2,6 +2,9 @@ import { supabase } from '../lib/supabase'
 import { hub } from './communication'
 import * as db from '../lib/supabase-data'
 import * as metaApi from '../lib/meta-api'
+import { createTask, startTask, completeTask, failTask } from '../lib/task-engine'
+import { checkPermission, setCooldown } from '../lib/permission-engine'
+import { journeyLog } from '../lib/journey-log'
 import type { AgentRole } from '../types/company'
 import type { ActionType } from '../types/agent'
 import {
@@ -29,28 +32,20 @@ interface AutomationRule {
   enabled: boolean
 }
 
-interface Guardrails {
-  maxBudgetChangePercent: number
-  minSpendBeforeAction: number
-  minDaysBeforeAction: number
-  maxActionsPerCycle: number
-  cooldownMinutes: number
+const analyzerNames: Record<string, string> = {
+  budget: 'Gestor de Orcamento',
+  analytics: 'Analista de Dados',
+  audience: 'Analista de Publico',
+  creative: 'Analista de Criativos',
+  orchestrator: 'Diretor',
+  leads: 'Agente de Leads',
+  sales: 'Agente de Vendas',
+  traffic: 'Agente de Trafego',
 }
-
-const DEFAULT_GUARDRAILS: Guardrails = {
-  maxBudgetChangePercent: 50,
-  minSpendBeforeAction: 10,
-  minDaysBeforeAction: 2,
-  maxActionsPerCycle: 5,
-  cooldownMinutes: 60,
-}
-
-const recentActions = new Map<string, number>()
 
 export class AgentEngine {
   private running = false
   private intervalId: ReturnType<typeof setInterval> | null = null
-  private guardrails: Guardrails = DEFAULT_GUARDRAILS
   private lastCycleDecisions: AgentDecision[] = []
 
   getLastDecisions(): AgentDecision[] {
@@ -71,7 +66,7 @@ export class AgentEngine {
       type: 'alert',
       priority: 'medium',
       subject: 'Orquestra IA ativada',
-      content: `Motor autonomo iniciado. ${Object.keys(analyzerNames).length} agentes analisando campanhas a cada ${Math.round(intervalMs / 60000)} minutos.`,
+      content: `Motor autonomo iniciado. 5 agentes analisando campanhas a cada ${Math.round(intervalMs / 60000)} minutos.`,
     })
 
     await this.runCycle()
@@ -96,9 +91,14 @@ export class AgentEngine {
   }
 
   async runCycle() {
+    const taskId = await createTask('cycle', 'interval')
+    await startTask(taskId)
+    journeyLog.resetCounter(taskId)
+
     const cycleStart = Date.now()
     let totalDecisions = 0
     let totalExecuted = 0
+    let totalRejected = 0
 
     try {
       const companies = await db.fetchCompanies()
@@ -109,34 +109,97 @@ export class AgentEngine {
         const config = await db.fetchMetaConfig(company.id)
         if (!config || config.status !== 'connected') continue
 
+        const loadStart = Date.now()
         const campaigns = await this.loadCampaignData(company.id)
         if (campaigns.length === 0) continue
 
-        // 1. Regras manuais do usuario (sempre executam)
+        await journeyLog.logDataLoaded(taskId, company.id, campaigns.length, Date.now() - loadStart)
+
+        // 1. Regras manuais do usuario
         const rules = await db.fetchAutomationRules(company.id)
         const enabledRules = rules.filter((r: AutomationRule) => r.enabled)
         for (const rule of enabledRules) {
-          await this.evaluateRule(rule, campaigns, config, company.id)
+          await this.evaluateRule(taskId, rule, campaigns, config, company.id)
         }
 
-        // 2. Agentes autonomos analisam e decidem
+        // 2. Analyzers autonomos
         const ctx = this.buildContext(campaigns)
-        const rawDecisions = [
-          ...analyzeBudget(ctx),
-          ...analyzePerformance(ctx),
-          ...analyzeAudience(ctx),
-          ...analyzeCreatives(ctx),
-          ...analyzeOrchestrator(ctx),
+
+        const analyzerRuns = [
+          { id: 'analyzeBudget', role: 'budget', fn: analyzeBudget },
+          { id: 'analyzePerformance', role: 'analytics', fn: analyzePerformance },
+          { id: 'analyzeAudience', role: 'audience', fn: analyzeAudience },
+          { id: 'analyzeCreatives', role: 'creative', fn: analyzeCreatives },
+          { id: 'analyzeOrchestrator', role: 'orchestrator', fn: analyzeOrchestrator },
         ]
 
+        const rawDecisions: AgentDecision[] = []
+        for (const analyzer of analyzerRuns) {
+          const t0 = Date.now()
+          const decisions = analyzer.fn(ctx)
+          rawDecisions.push(...decisions)
+          await journeyLog.logSkillExecuted(taskId, company.id, analyzer.id, analyzer.role, decisions.length, Date.now() - t0)
+        }
+
+        // 3. Dedup
+        const beforeDedup = rawDecisions.length
         const decisions = deduplicateDecisions(rawDecisions)
-        const safe = this.applyGuardrails(decisions)
+        if (beforeDedup !== decisions.length) {
+          const removed = rawDecisions
+            .filter(d => !decisions.includes(d))
+            .map(d => `${d.action}:${d.campaignName}`)
+          await journeyLog.logConflictResolved(taskId, company.id, beforeDedup, decisions.length, removed)
+        }
+
         totalDecisions += decisions.length
 
-        // 3. Executar decisoes aprovadas
+        // 4. Permission check (substitui guardrails hardcoded)
+        const approved: AgentDecision[] = []
+        for (const decision of decisions) {
+          const campaign = campaigns.find(c => c.id === decision.campaignId)
+          if (!campaign) continue
+
+          let budgetChangePercent: number | undefined
+          if (decision.action === 'adjust_budget' || decision.action === 'scale_campaign') {
+            const multiplier = (decision.params.multiplier as number) || 1
+            budgetChangePercent = Math.abs(multiplier - 1) * 100
+          }
+
+          const permission = await checkPermission(
+            company.id,
+            decision.action,
+            decision.agent,
+            {
+              confidence: decision.confidence,
+              campaignId: decision.campaignId,
+              daysRunning: campaign.daysRunning,
+              totalSpend: campaign.metrics.spend,
+              budgetChangePercent,
+            }
+          )
+
+          await journeyLog.logPermissionChecked(
+            taskId, company.id, decision.agent, decision.action,
+            decision.campaignId, permission.allowed, permission.reason
+          )
+
+          if (permission.allowed) {
+            approved.push(decision)
+            await journeyLog.logDecisionMade(
+              taskId, company.id, decision.agent, decision.action,
+              decision.campaignId, decision.reason, decision.confidence
+            )
+          } else {
+            totalRejected++
+          }
+        }
+
+        await journeyLog.logGuardrailApplied(taskId, company.id, decisions.length, approved.length, decisions.length - approved.length)
+
+        // 5. Executar acoes aprovadas (max 5 por empresa por ciclo)
         let actionsThisCycle = 0
-        for (const decision of safe) {
-          if (actionsThisCycle >= this.guardrails.maxActionsPerCycle) break
+        for (const decision of approved) {
+          if (actionsThisCycle >= 5) break
 
           const campaign = campaigns.find(c => c.id === decision.campaignId)
           if (!campaign) continue
@@ -156,15 +219,22 @@ export class AgentEngine {
             },
           })
 
-          await this.executeDecision(decision, campaign, config, company.id)
+          await this.executeDecision(taskId, decision, campaign, config, company.id)
           actionsThisCycle++
           totalExecuted++
         }
 
-        this.lastCycleDecisions = safe
+        this.lastCycleDecisions = approved
       }
 
       const elapsed = ((Date.now() - cycleStart) / 1000).toFixed(1)
+
+      await completeTask(taskId, { elapsed, companies: 'all' }, {
+        proposed: totalDecisions,
+        executed: totalExecuted,
+        rejected: totalRejected,
+      })
+
       if (totalDecisions > 0) {
         hub.send({
           from: 'orchestrator',
@@ -172,10 +242,13 @@ export class AgentEngine {
           type: 'report',
           priority: 'low',
           subject: `Ciclo concluido em ${elapsed}s`,
-          content: `${totalDecisions} decisoes analisadas, ${totalExecuted} acoes executadas.`,
+          content: `${totalDecisions} decisoes analisadas, ${totalExecuted} executadas, ${totalRejected} rejeitadas por policy.`,
         })
       }
     } catch (err) {
+      const errorMsg = err instanceof Error ? err.message : 'Erro desconhecido'
+      await failTask(taskId, errorMsg)
+
       console.error('Erro no ciclo do motor:', err)
       hub.send({
         from: 'orchestrator',
@@ -183,7 +256,7 @@ export class AgentEngine {
         type: 'alert',
         priority: 'critical',
         subject: 'Erro no motor de agentes',
-        content: `Ocorreu um erro: ${err instanceof Error ? err.message : 'Erro desconhecido'}`,
+        content: `Ocorreu um erro: ${errorMsg}`,
       })
     }
   }
@@ -291,45 +364,51 @@ export class AgentEngine {
     return { campaigns, totalBudget, avgROAS, avgCTR, avgCPA }
   }
 
-  private applyGuardrails(decisions: AgentDecision[]): AgentDecision[] {
-    const now = Date.now()
-    return decisions.filter(d => {
-      if (d.confidence < 0.6) return false
-
-      const key = `${d.campaignId}:${d.action}`
-      const lastTime = recentActions.get(key)
-      if (lastTime && now - lastTime < this.guardrails.cooldownMinutes * 60000) return false
-
-      if (d.action === 'adjust_budget' || d.action === 'scale_campaign') {
-        const multiplier = (d.params.multiplier as number) || 1
-        const changePercent = Math.abs(multiplier - 1) * 100
-        if (changePercent > this.guardrails.maxBudgetChangePercent) return false
-      }
-
-      return true
-    })
-  }
-
   private async executeDecision(
+    taskId: string,
     decision: AgentDecision,
     campaign: CampaignData,
     config: db.MetaConfig,
     companyId: string
   ) {
-    const key = `${decision.campaignId}:${decision.action}`
-    recentActions.set(key, Date.now())
+    const t0 = Date.now()
+    const stateBefore = { status: campaign.status, budget: campaign.budget }
 
-    await this.executeAction(
-      decision.action,
-      campaign,
-      config,
-      decision.agent,
-      companyId,
-      decision.params
-    )
+    try {
+      await this.executeAction(decision.action, campaign, config, decision.agent, companyId, decision.params)
+
+      const stateAfter = { ...stateBefore }
+      if (decision.action === 'pause_ad' || decision.action === 'kill_campaign') stateAfter.status = 'PAUSED'
+      if (decision.action === 'activate_ad') stateAfter.status = 'ACTIVE'
+      if (decision.action === 'adjust_budget' || decision.action === 'scale_campaign') {
+        stateAfter.budget = Math.round(campaign.budget * ((decision.params.multiplier as number) || 1.2) * 100) / 100
+      }
+
+      await journeyLog.logActionExecuted(
+        taskId, companyId, decision.agent, decision.action,
+        decision.campaignId, stateBefore, stateAfter, Date.now() - t0
+      )
+
+      const policy = await this.getPolicyCooldown(companyId, decision.action)
+      await setCooldown(companyId, decision.campaignId, decision.action, policy)
+    } catch (err) {
+      const errorMsg = err instanceof Error ? err.message : 'Erro desconhecido'
+      await journeyLog.logActionFailed(taskId, companyId, decision.agent, decision.action, decision.campaignId, errorMsg)
+    }
+  }
+
+  private async getPolicyCooldown(companyId: string, capabilityId: string): Promise<number> {
+    const { data } = await supabase
+      .from('policies')
+      .select('cooldown_minutes')
+      .eq('company_id', companyId)
+      .eq('capability_id', capabilityId)
+      .single()
+    return (data?.cooldown_minutes as number) || 60
   }
 
   private async evaluateRule(
+    taskId: string,
     rule: AutomationRule,
     campaigns: CampaignData[],
     config: db.MetaConfig,
@@ -342,6 +421,8 @@ export class AgentEngine {
 
       const triggered = this.checkCondition(metricValue, rule.operator, rule.threshold)
       if (!triggered) continue
+
+      await journeyLog.logRuleTriggered(taskId, companyId, rule.id, rule.name, campaign.id, metricValue, rule.threshold)
 
       const agentRole = rule.agentRole as AgentRole
       const actionType = rule.action as ActionType
@@ -498,6 +579,8 @@ export class AgentEngine {
         subject: `Falha na acao: ${actionType}`,
         content: `Erro: ${err instanceof Error ? err.message : 'Erro desconhecido'}`,
       })
+
+      throw err
     }
   }
 
@@ -528,17 +611,6 @@ export class AgentEngine {
       default: return false
     }
   }
-}
-
-const analyzerNames: Record<string, string> = {
-  budget: 'Gestor de Orcamento',
-  analytics: 'Analista de Dados',
-  audience: 'Analista de Publico',
-  creative: 'Analista de Criativos',
-  orchestrator: 'Diretor',
-  leads: 'Agente de Leads',
-  sales: 'Agente de Vendas',
-  traffic: 'Agente de Trafego',
 }
 
 export const engine = new AgentEngine()
