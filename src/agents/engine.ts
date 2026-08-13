@@ -4,6 +4,16 @@ import * as db from '../lib/supabase-data'
 import * as metaApi from '../lib/meta-api'
 import type { AgentRole } from '../types/company'
 import type { ActionType } from '../types/agent'
+import {
+  type CampaignData,
+  type AgentDecision,
+  analyzeBudget,
+  analyzePerformance,
+  analyzeAudience,
+  analyzeCreatives,
+  analyzeOrchestrator,
+  deduplicateDecisions,
+} from './analyzers'
 
 interface AutomationRule {
   id: string
@@ -19,30 +29,37 @@ interface AutomationRule {
   enabled: boolean
 }
 
-interface CampaignWithMetrics {
-  id: string
-  companyId: string
-  name: string
-  objective: string
-  status: string
-  budget: number
-  metaCampaignId: string | null
-  metrics: {
-    impressions: number
-    clicks: number
-    spend: number
-    conversions: number
-    ctr: number
-    cpc: number
-    cpm: number
-    roas: number
-    frequency: number
-  }
+interface Guardrails {
+  maxBudgetChangePercent: number
+  minSpendBeforeAction: number
+  minDaysBeforeAction: number
+  maxActionsPerCycle: number
+  cooldownMinutes: number
 }
+
+const DEFAULT_GUARDRAILS: Guardrails = {
+  maxBudgetChangePercent: 50,
+  minSpendBeforeAction: 10,
+  minDaysBeforeAction: 2,
+  maxActionsPerCycle: 5,
+  cooldownMinutes: 60,
+}
+
+const recentActions = new Map<string, number>()
 
 export class AgentEngine {
   private running = false
   private intervalId: ReturnType<typeof setInterval> | null = null
+  private guardrails: Guardrails = DEFAULT_GUARDRAILS
+  private lastCycleDecisions: AgentDecision[] = []
+
+  getLastDecisions(): AgentDecision[] {
+    return this.lastCycleDecisions
+  }
+
+  isRunning(): boolean {
+    return this.running
+  }
 
   async start(intervalMs = 300000) {
     if (this.running) return
@@ -53,12 +70,11 @@ export class AgentEngine {
       to: 'broadcast',
       type: 'alert',
       priority: 'medium',
-      subject: 'Motor de agentes iniciado',
-      content: 'O motor de automacao foi ativado. Os agentes estao monitorando as campanhas.',
+      subject: 'Orquestra IA ativada',
+      content: `Motor autonomo iniciado. ${Object.keys(analyzerNames).length} agentes analisando campanhas a cada ${Math.round(intervalMs / 60000)} minutos.`,
     })
 
     await this.runCycle()
-
     this.intervalId = setInterval(() => this.runCycle(), intervalMs)
   }
 
@@ -74,12 +90,16 @@ export class AgentEngine {
       to: 'broadcast',
       type: 'alert',
       priority: 'medium',
-      subject: 'Motor de agentes pausado',
-      content: 'O motor de automacao foi pausado.',
+      subject: 'Orquestra IA pausada',
+      content: 'Motor autonomo pausado. Agentes em standby.',
     })
   }
 
   async runCycle() {
+    const cycleStart = Date.now()
+    let totalDecisions = 0
+    let totalExecuted = 0
+
     try {
       const companies = await db.fetchCompanies()
 
@@ -89,15 +109,71 @@ export class AgentEngine {
         const config = await db.fetchMetaConfig(company.id)
         if (!config || config.status !== 'connected') continue
 
-        const campaigns = await this.getCampaignsWithMetrics(company.id)
+        const campaigns = await this.loadCampaignData(company.id)
+        if (campaigns.length === 0) continue
+
+        // 1. Regras manuais do usuario (sempre executam)
         const rules = await db.fetchAutomationRules(company.id)
         const enabledRules = rules.filter((r: AutomationRule) => r.enabled)
-
         for (const rule of enabledRules) {
           await this.evaluateRule(rule, campaigns, config, company.id)
         }
 
-        await this.runBuiltInChecks(campaigns, config, company.id)
+        // 2. Agentes autonomos analisam e decidem
+        const ctx = this.buildContext(campaigns)
+        const rawDecisions = [
+          ...analyzeBudget(ctx),
+          ...analyzePerformance(ctx),
+          ...analyzeAudience(ctx),
+          ...analyzeCreatives(ctx),
+          ...analyzeOrchestrator(ctx),
+        ]
+
+        const decisions = deduplicateDecisions(rawDecisions)
+        const safe = this.applyGuardrails(decisions)
+        totalDecisions += decisions.length
+
+        // 3. Executar decisoes aprovadas
+        let actionsThisCycle = 0
+        for (const decision of safe) {
+          if (actionsThisCycle >= this.guardrails.maxActionsPerCycle) break
+
+          const campaign = campaigns.find(c => c.id === decision.campaignId)
+          if (!campaign) continue
+
+          hub.send({
+            from: decision.agent,
+            to: 'orchestrator',
+            type: decision.action === 'send_alert' ? 'alert' : 'recommendation',
+            priority: decision.priority,
+            subject: `[${analyzerNames[decision.agent] || decision.agent}] ${decision.campaignName}`,
+            content: decision.reason,
+            data: {
+              campaignId: decision.campaignId,
+              action: decision.action,
+              confidence: decision.confidence,
+              impact: decision.impact,
+            },
+          })
+
+          await this.executeDecision(decision, campaign, config, company.id)
+          actionsThisCycle++
+          totalExecuted++
+        }
+
+        this.lastCycleDecisions = safe
+      }
+
+      const elapsed = ((Date.now() - cycleStart) / 1000).toFixed(1)
+      if (totalDecisions > 0) {
+        hub.send({
+          from: 'orchestrator',
+          to: 'broadcast',
+          type: 'report',
+          priority: 'low',
+          subject: `Ciclo concluido em ${elapsed}s`,
+          content: `${totalDecisions} decisoes analisadas, ${totalExecuted} acoes executadas.`,
+        })
       }
     } catch (err) {
       console.error('Erro no ciclo do motor:', err)
@@ -112,35 +188,43 @@ export class AgentEngine {
     }
   }
 
-  private async getCampaignsWithMetrics(companyId: string): Promise<CampaignWithMetrics[]> {
+  private async loadCampaignData(companyId: string): Promise<CampaignData[]> {
     const { data: campaigns } = await supabase
       .from('campaigns')
       .select('*')
       .eq('company_id', companyId)
-      .eq('status', 'ACTIVE')
 
     if (!campaigns || campaigns.length === 0) return []
 
-    const result: CampaignWithMetrics[] = []
+    const campaignIds = campaigns.map((c: Record<string, unknown>) => c.id as string)
+    const { data: allMetrics } = await supabase
+      .from('campaign_metrics')
+      .select('*')
+      .in('campaign_id', campaignIds)
+      .order('date', { ascending: false })
+
+    const result: CampaignData[] = []
 
     for (const camp of campaigns) {
-      const { data: metrics } = await supabase
-        .from('campaign_metrics')
-        .select('*')
-        .eq('campaign_id', camp.id)
-        .order('date', { ascending: false })
-        .limit(7)
-
-      const totals = (metrics || []).reduce(
-        (acc: Record<string, number>, m: Record<string, number>) => ({
-          impressions: acc.impressions + (m.impressions || 0),
-          clicks: acc.clicks + (m.clicks || 0),
-          spend: acc.spend + (m.spend || 0),
-          conversions: acc.conversions + (m.conversions || 0),
-          revenue: acc.revenue + (m.revenue || 0),
-        }),
-        { impressions: 0, clicks: 0, spend: 0, conversions: 0, revenue: 0 }
+      const metrics = (allMetrics || []).filter(
+        (m: Record<string, unknown>) => m.campaign_id === camp.id
       )
+
+      const recent = metrics.slice(0, 7)
+      const older = metrics.slice(7, 14)
+
+      const totals = this.sumMetrics(recent)
+      const oldTotals = this.sumMetrics(older)
+
+      const ctr = totals.impressions > 0 ? (totals.clicks / totals.impressions) * 100 : 0
+      const oldCtr = oldTotals.impressions > 0 ? (oldTotals.clicks / oldTotals.impressions) * 100 : 0
+      const cpa = totals.conversions > 0 ? totals.spend / totals.conversions : 0
+      const oldCpa = oldTotals.conversions > 0 ? oldTotals.spend / oldTotals.conversions : 0
+      const roas = totals.spend > 0 ? totals.revenue / totals.spend : 0
+      const oldRoas = oldTotals.spend > 0 ? oldTotals.revenue / oldTotals.spend : 0
+
+      const startDate = camp.start_date ? new Date(camp.start_date) : new Date(camp.created_at)
+      const daysRunning = Math.max(1, Math.floor((Date.now() - startDate.getTime()) / 86400000))
 
       result.push({
         id: camp.id,
@@ -148,32 +232,111 @@ export class AgentEngine {
         name: camp.name,
         objective: camp.objective,
         status: camp.status,
-        budget: camp.budget,
-        metaCampaignId: camp.meta_campaign_id,
+        budget: camp.budget || 0,
+        metaCampaignId: camp.meta_campaign_id || null,
         metrics: {
           impressions: totals.impressions,
           clicks: totals.clicks,
           spend: totals.spend,
           conversions: totals.conversions,
-          ctr: totals.impressions > 0 ? (totals.clicks / totals.impressions) * 100 : 0,
+          ctr,
           cpc: totals.clicks > 0 ? totals.spend / totals.clicks : 0,
           cpm: totals.impressions > 0 ? (totals.spend / totals.impressions) * 1000 : 0,
-          roas: totals.spend > 0 ? totals.revenue / totals.spend : 0,
-          frequency: 0,
+          roas,
+          frequency: totals.reach > 0 ? totals.impressions / totals.reach : 0,
+          reach: totals.reach,
+          revenue: totals.revenue,
         },
+        trend: {
+          spendDelta: oldTotals.spend > 0 ? ((totals.spend - oldTotals.spend) / oldTotals.spend) * 100 : 0,
+          ctrDelta: oldCtr > 0 ? ((ctr - oldCtr) / oldCtr) * 100 : 0,
+          cpaDelta: oldCpa > 0 ? ((cpa - oldCpa) / oldCpa) * 100 : 0,
+          roasDelta: oldRoas > 0 ? ((roas - oldRoas) / oldRoas) * 100 : 0,
+        },
+        daysRunning,
       })
     }
 
     return result
   }
 
+  private sumMetrics(rows: Record<string, unknown>[]) {
+    return rows.reduce(
+      (acc, r) => ({
+        impressions: acc.impressions + ((r.impressions as number) || 0),
+        clicks: acc.clicks + ((r.clicks as number) || 0),
+        spend: acc.spend + ((r.spend as number) || 0),
+        conversions: acc.conversions + ((r.conversions as number) || 0),
+        revenue: acc.revenue + ((r.revenue as number) || 0),
+        reach: acc.reach + ((r.reach as number) || 0),
+      }),
+      { impressions: 0, clicks: 0, spend: 0, conversions: 0, revenue: 0, reach: 0 }
+    )
+  }
+
+  private buildContext(campaigns: CampaignData[]) {
+    const active = campaigns.filter(c => c.status === 'ACTIVE' && c.metrics.spend > 0)
+    const totalBudget = active.reduce((s, c) => s + c.budget, 0)
+    const avgROAS = active.length > 0
+      ? active.reduce((s, c) => s + c.metrics.roas, 0) / active.length
+      : 0
+    const avgCTR = active.length > 0
+      ? active.reduce((s, c) => s + c.metrics.ctr, 0) / active.length
+      : 0
+    const withConversions = active.filter(c => c.metrics.conversions > 0)
+    const avgCPA = withConversions.length > 0
+      ? withConversions.reduce((s, c) => s + c.metrics.spend / c.metrics.conversions, 0) / withConversions.length
+      : 0
+
+    return { campaigns, totalBudget, avgROAS, avgCTR, avgCPA }
+  }
+
+  private applyGuardrails(decisions: AgentDecision[]): AgentDecision[] {
+    const now = Date.now()
+    return decisions.filter(d => {
+      if (d.confidence < 0.6) return false
+
+      const key = `${d.campaignId}:${d.action}`
+      const lastTime = recentActions.get(key)
+      if (lastTime && now - lastTime < this.guardrails.cooldownMinutes * 60000) return false
+
+      if (d.action === 'adjust_budget' || d.action === 'scale_campaign') {
+        const multiplier = (d.params.multiplier as number) || 1
+        const changePercent = Math.abs(multiplier - 1) * 100
+        if (changePercent > this.guardrails.maxBudgetChangePercent) return false
+      }
+
+      return true
+    })
+  }
+
+  private async executeDecision(
+    decision: AgentDecision,
+    campaign: CampaignData,
+    config: db.MetaConfig,
+    companyId: string
+  ) {
+    const key = `${decision.campaignId}:${decision.action}`
+    recentActions.set(key, Date.now())
+
+    await this.executeAction(
+      decision.action,
+      campaign,
+      config,
+      decision.agent,
+      companyId,
+      decision.params
+    )
+  }
+
   private async evaluateRule(
     rule: AutomationRule,
-    campaigns: CampaignWithMetrics[],
+    campaigns: CampaignData[],
     config: db.MetaConfig,
     companyId: string
   ) {
     for (const campaign of campaigns) {
+      if (campaign.status !== 'ACTIVE') continue
       const metricValue = this.getMetricValue(campaign, rule.metric)
       if (metricValue === null) continue
 
@@ -202,65 +365,9 @@ export class AgentEngine {
     }
   }
 
-  private async runBuiltInChecks(
-    campaigns: CampaignWithMetrics[],
-    config: db.MetaConfig,
-    companyId: string
-  ) {
-    for (const campaign of campaigns) {
-      if (campaign.metrics.ctr < 0.5 && campaign.metrics.impressions > 1000) {
-        hub.send({
-          from: 'analytics',
-          to: 'creative',
-          type: 'recommendation',
-          priority: 'high',
-          subject: `CTR baixo: ${campaign.name}`,
-          content: `CTR de ${campaign.metrics.ctr.toFixed(2)}% esta abaixo do minimo. Recomendo revisar criativos.`,
-          data: { campaignId: campaign.id, ctr: campaign.metrics.ctr },
-        })
-      }
-
-      if (campaign.metrics.frequency > 3) {
-        hub.send({
-          from: 'audience',
-          to: 'orchestrator',
-          type: 'alert',
-          priority: 'medium',
-          subject: `Frequencia alta: ${campaign.name}`,
-          content: `Frequencia de ${campaign.metrics.frequency.toFixed(1)}. Publico pode estar saturado.`,
-          data: { campaignId: campaign.id, frequency: campaign.metrics.frequency },
-        })
-      }
-
-      if (campaign.metrics.roas > 3 && campaign.metrics.spend > 50) {
-        hub.send({
-          from: 'budget',
-          to: 'orchestrator',
-          type: 'recommendation',
-          priority: 'high',
-          subject: `Oportunidade de escalar: ${campaign.name}`,
-          content: `ROAS de ${campaign.metrics.roas.toFixed(2)}x com gasto de R$${campaign.metrics.spend.toFixed(2)}. Recomendo aumentar budget em 20%.`,
-          data: { campaignId: campaign.id, roas: campaign.metrics.roas, spend: campaign.metrics.spend },
-        })
-      }
-
-      if (campaign.metrics.conversions > 0 && campaign.metrics.spend / campaign.metrics.conversions > campaign.budget * 0.5) {
-        hub.send({
-          from: 'analytics',
-          to: 'orchestrator',
-          type: 'alert',
-          priority: 'critical',
-          subject: `CPA muito alto: ${campaign.name}`,
-          content: `Custo por conversao de R$${(campaign.metrics.spend / campaign.metrics.conversions).toFixed(2)} esta muito alto.`,
-          data: { campaignId: campaign.id, cpa: campaign.metrics.spend / campaign.metrics.conversions },
-        })
-      }
-    }
-  }
-
   private async executeAction(
     actionType: ActionType,
-    campaign: CampaignWithMetrics,
+    campaign: CampaignData,
     config: db.MetaConfig,
     agentRole: AgentRole,
     companyId: string,
@@ -330,8 +437,8 @@ export class AgentEngine {
         }
 
         case 'send_alert': {
-          description = `Alerta enviado sobre "${campaign.name}"`
-          result = params.message as string || 'Alerta enviado'
+          description = `Alerta: "${campaign.name}"`
+          result = (params.message as string) || 'Alerta enviado'
           break
         }
 
@@ -349,6 +456,17 @@ export class AgentEngine {
         description,
         status: 'completed',
         result,
+        impact: actionType !== 'send_alert' ? {
+          metric: actionType === 'adjust_budget' || actionType === 'scale_campaign' ? 'budget' : 'status',
+          before: campaign.budget,
+          after: actionType === 'adjust_budget' || actionType === 'scale_campaign'
+            ? Math.round(campaign.budget * ((params.multiplier as number) || 1.2) * 100) / 100
+            : 0,
+          change: 0,
+          changePercent: actionType === 'adjust_budget' || actionType === 'scale_campaign'
+            ? (((params.multiplier as number) || 1.2) - 1) * 100
+            : 0,
+        } : undefined,
       })
 
       hub.send({
@@ -356,7 +474,7 @@ export class AgentEngine {
         to: 'broadcast',
         type: 'report',
         priority: 'medium',
-        subject: `Acao executada: ${actionType}`,
+        subject: `[${analyzerNames[agentRole] || agentRole}] Acao executada`,
         content: description,
         data: { campaignId: campaign.id, result },
       })
@@ -383,7 +501,7 @@ export class AgentEngine {
     }
   }
 
-  private getMetricValue(campaign: CampaignWithMetrics, metric: string): number | null {
+  private getMetricValue(campaign: CampaignData, metric: string): number | null {
     const map: Record<string, number> = {
       ctr: campaign.metrics.ctr,
       cpc: campaign.metrics.cpc,
@@ -410,6 +528,17 @@ export class AgentEngine {
       default: return false
     }
   }
+}
+
+const analyzerNames: Record<string, string> = {
+  budget: 'Gestor de Orcamento',
+  analytics: 'Analista de Dados',
+  audience: 'Analista de Publico',
+  creative: 'Analista de Criativos',
+  orchestrator: 'Diretor',
+  leads: 'Agente de Leads',
+  sales: 'Agente de Vendas',
+  traffic: 'Agente de Trafego',
 }
 
 export const engine = new AgentEngine()
