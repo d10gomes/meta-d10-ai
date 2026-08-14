@@ -6,11 +6,8 @@ import {
 import { TrendingUp, DollarSign, MousePointerClick, Eye, Target } from 'lucide-react'
 import { useApp } from '../contexts/AppContext'
 
-type Period = '7d' | '14d' | '30d' | 'all'
-
 export default function Performance() {
   const { companies, selectedCompanyId } = useApp()
-  const [period, setPeriod] = useState<Period>('30d')
   const [activeChart, setActiveChart] = useState<'spend' | 'cpl' | 'roas' | 'ctr'>('spend')
 
   const filteredCompanies = selectedCompanyId
@@ -129,24 +126,6 @@ export default function Performance() {
 
   return (
     <div className="space-y-6">
-      {/* Period Selector */}
-      <div className="flex items-center gap-2">
-        {([['7d', '7 dias'], ['14d', '14 dias'], ['30d', '30 dias'], ['all', 'Tudo']] as [Period, string][]).map(([key, label]) => (
-          <button
-            key={key}
-            type="button"
-            onClick={() => setPeriod(key)}
-            className={`px-4 py-1.5 rounded-lg text-sm font-medium transition-colors ${
-              period === key
-                ? 'bg-blue-600 text-white'
-                : 'bg-white text-gray-600 border border-gray-200 hover:bg-gray-50'
-            }`}
-          >
-            {label}
-          </button>
-        ))}
-      </div>
-
       {/* KPI Cards */}
       <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-3">
         <KpiCard icon={DollarSign} label="Investido" value={`R$ ${kpis.spend.toLocaleString('pt-BR', { maximumFractionDigits: 0 })}`} color="blue" />

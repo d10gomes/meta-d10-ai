@@ -1,5 +1,5 @@
 import { useMemo, useState } from 'react'
-import { TrendingUp, TrendingDown, AlertTriangle, Lightbulb, Target, Zap, CheckCircle, Brain, DollarSign, Eye, MousePointerClick, BarChart3, ArrowUp, ArrowDown, Minus, Shield } from 'lucide-react'
+import { TrendingUp, AlertTriangle, Lightbulb, Target, Zap, Brain, DollarSign, Eye, MousePointerClick, BarChart3, ArrowUp, ArrowDown, Minus, Shield } from 'lucide-react'
 import { useApp } from '../contexts/AppContext'
 
 type InsightType = 'oportunidade' | 'alerta' | 'sugestao' | 'destaque'
@@ -478,10 +478,10 @@ export default function Insights() {
                     <p className="text-sm text-gray-600 mt-1">{insight.description}</p>
                     <p className="text-xs text-gray-400 mt-1">{insight.companyName}{insight.campaignName ? ` — ${insight.campaignName}` : ''}</p>
                     <div className="flex items-center gap-3 mt-3">
-                      <button className="flex items-center gap-1.5 text-xs bg-blue-600 text-white px-3 py-1.5 rounded-lg font-medium hover:bg-blue-700 transition-colors">
-                        <CheckCircle size={12} />
+                      <span className="flex items-center gap-1.5 text-xs bg-blue-50 text-blue-700 px-3 py-1.5 rounded-lg font-medium border border-blue-200">
+                        <Zap size={12} />
                         {insight.action}
-                      </button>
+                      </span>
                       <button
                         onClick={() => setDismissedIds(prev => new Set([...prev, originalIndex]))}
                         className="text-xs text-gray-400 hover:text-gray-600 px-2 py-1.5 transition-colors"
