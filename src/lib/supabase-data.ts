@@ -213,9 +213,9 @@ export async function createMessage(msg: Omit<AgentMessage, 'id' | 'timestamp' |
   const { data, error } = await supabase
     .from('agent_messages')
     .insert({
-      from_agent: msg.from,
-      to_agent: msg.to,
-      type: msg.type,
+      from_role: msg.from,
+      to_role: msg.to,
+      message_type: msg.type,
       priority: msg.priority,
       subject: msg.subject,
       content: msg.content,
@@ -226,6 +226,22 @@ export async function createMessage(msg: Omit<AgentMessage, 'id' | 'timestamp' |
 
   if (error) throw error
   return mapMessage(data)
+}
+
+export async function markMessageAsRead(id: string) {
+  const { error } = await supabase
+    .from('agent_messages')
+    .update({ read: true })
+    .eq('id', id)
+  if (error) throw error
+}
+
+export async function markAllMessagesAsRead() {
+  const { error } = await supabase
+    .from('agent_messages')
+    .update({ read: true })
+    .eq('read', false)
+  if (error) throw error
 }
 
 // ==================== AGENT ACTIONS ====================
@@ -245,18 +261,25 @@ export async function fetchActions(companyId?: string, limit = 50): Promise<Agen
 }
 
 export async function createAction(action: Omit<AgentAction, 'id' | 'timestamp'>) {
+  const insert: Record<string, unknown> = {
+    agent_role: action.agentRole,
+    company_id: action.companyId,
+    campaign_id: action.campaignId,
+    action_type: action.type,
+    description: action.description,
+    status: action.status,
+    result: action.result,
+  }
+  if (action.impact) {
+    insert.impact_metric = action.impact.metric
+    insert.impact_before = action.impact.before
+    insert.impact_after = action.impact.after
+    insert.impact_change_percent = action.impact.changePercent
+  }
+
   const { data, error } = await supabase
     .from('agent_actions')
-    .insert({
-      agent_role: action.agentRole,
-      company_id: action.companyId,
-      campaign_id: action.campaignId,
-      type: action.type,
-      description: action.description,
-      status: action.status,
-      result: action.result,
-      impact: action.impact || {},
-    })
+    .insert(insert)
     .select()
     .single()
 
@@ -507,9 +530,9 @@ function mapAgent(raw: Record<string, unknown>): CompanyAgent {
 function mapMessage(raw: Record<string, unknown>): AgentMessage {
   return {
     id: raw.id as string,
-    from: raw.from_agent as AgentMessage['from'],
-    to: raw.to_agent as AgentMessage['to'],
-    type: raw.type as AgentMessage['type'],
+    from: raw.from_role as AgentMessage['from'],
+    to: raw.to_role as AgentMessage['to'],
+    type: raw.message_type as AgentMessage['type'],
     priority: raw.priority as AgentMessage['priority'],
     subject: raw.subject as string,
     content: raw.content as string,
@@ -520,16 +543,23 @@ function mapMessage(raw: Record<string, unknown>): AgentMessage {
 }
 
 function mapAction(raw: Record<string, unknown>): AgentAction {
+  const hasImpact = raw.impact_metric != null
   return {
     id: raw.id as string,
     agentRole: raw.agent_role as AgentAction['agentRole'],
     companyId: raw.company_id as string,
     campaignId: raw.campaign_id as string | undefined,
-    type: raw.type as AgentAction['type'],
+    type: raw.action_type as AgentAction['type'],
     description: raw.description as string,
     status: raw.status as AgentAction['status'],
     result: raw.result as string | undefined,
-    impact: raw.impact as AgentAction['impact'] | undefined,
+    impact: hasImpact ? {
+      metric: raw.impact_metric as string,
+      before: raw.impact_before as number,
+      after: raw.impact_after as number,
+      change: ((raw.impact_after as number) || 0) - ((raw.impact_before as number) || 0),
+      changePercent: raw.impact_change_percent as number,
+    } : undefined,
     timestamp: raw.created_at as string,
   }
 }
