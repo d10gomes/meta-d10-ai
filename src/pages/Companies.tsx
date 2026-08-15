@@ -1,15 +1,7 @@
 import { useState } from 'react'
 import { Plus, TrendingUp, Users, Target, Zap, X, Loader2 } from 'lucide-react'
 import { useApp } from '../contexts/AppContext'
-import { createCompany } from '../lib/supabase-data'
-import { supabase } from '../lib/supabase'
-import type { AgentRole } from '../types/company'
-
-const defaultAgentRoles: AgentRole[] = [
-  'orchestrator', 'leads', 'sales', 'traffic', 'registration',
-  'apps', 'awareness', 'engagement', 'funnel',
-  'creative', 'audience', 'budget', 'copy', 'analytics',
-]
+import { createCompany, createDefaultAgents } from '../lib/supabase-data'
 
 export default function Companies() {
   const { companies, setSelectedCompanyId, setActivePage, refresh, dataSource } = useApp()
@@ -32,15 +24,7 @@ export default function Companies() {
         status: 'active',
       })
 
-      const companyId = result.id
-      const agentInserts = defaultAgentRoles.map(role => ({
-        company_id: companyId,
-        role,
-        status: 'idle',
-        performance_score: 0,
-        actions_today: 0,
-      }))
-      await supabase.from('agents').insert(agentInserts)
+      await createDefaultAgents(result.id)
 
       await refresh()
       setShowForm(false)

@@ -158,6 +158,24 @@ export async function updateCompanyData(id: string, updates: Partial<Company>) {
   if (error) throw error
 }
 
+const DEFAULT_AGENT_ROLES = [
+  'orchestrator', 'leads', 'sales', 'traffic', 'registration',
+  'apps', 'awareness', 'engagement', 'funnel',
+  'creative', 'audience', 'budget', 'copy', 'analytics',
+] as const
+
+export async function createDefaultAgents(companyId: string) {
+  const inserts = DEFAULT_AGENT_ROLES.map(role => ({
+    company_id: companyId,
+    role,
+    status: 'idle',
+    performance_score: 0,
+    actions_today: 0,
+  }))
+  const { error } = await supabase.from('agents').insert(inserts)
+  if (error) throw error
+}
+
 // ==================== CAMPAIGNS ====================
 
 export async function fetchCampaigns(companyId?: string) {
