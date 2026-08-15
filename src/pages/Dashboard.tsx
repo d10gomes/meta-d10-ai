@@ -1,6 +1,6 @@
 import { useState, useEffect, useMemo } from 'react'
-import { DollarSign, Users, TrendingUp, Zap, Play, Pause, Cloud, Eye, MousePointerClick, Target, BarChart3, RefreshCw, Loader2, ChevronRight, Timer, CheckCircle, XCircle, Brain } from 'lucide-react'
-import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, PieChart, Pie, Cell } from 'recharts'
+import { DollarSign, TrendingUp, Zap, Play, Pause, Cloud, MousePointerClick, Target, RefreshCw, Loader2, ChevronRight, Timer, CheckCircle, XCircle, Brain } from 'lucide-react'
+import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer } from 'recharts'
 import { useApp } from '../contexts/AppContext'
 import { engine } from '../agents/engine'
 import { syncService, type SyncStatus } from '../lib/sync-service'
