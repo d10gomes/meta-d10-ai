@@ -1,9 +1,10 @@
 import { useState, useEffect, useMemo } from 'react'
-import { DollarSign, Users, TrendingUp, Zap, Play, Pause, Cloud, Eye, MousePointerClick, Target, BarChart3, RefreshCw, Loader2, ChevronRight, Timer } from 'lucide-react'
+import { DollarSign, Users, TrendingUp, Zap, Play, Pause, Cloud, Eye, MousePointerClick, Target, BarChart3, RefreshCw, Loader2, ChevronRight, Timer, CheckCircle, XCircle, Brain } from 'lucide-react'
 import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, PieChart, Pie, Cell } from 'recharts'
 import { useApp } from '../contexts/AppContext'
 import { engine } from '../agents/engine'
 import { syncService, type SyncStatus } from '../lib/sync-service'
+import { fetchRecentTasks, type Task } from '../lib/supabase-data'
 
 const objectiveColors: Record<string, string> = {
   LEADS: '#22c55e', SALES: '#3b82f6', TRAFFIC: '#a855f7', REGISTRATION: '#6366f1',
@@ -16,6 +17,13 @@ export default function Dashboard() {
   const [syncing, setSyncing] = useState(false)
   const [syncStatus, setSyncStatus] = useState<SyncStatus>(syncService.getStatus())
   const [autoSyncOn, setAutoSyncOn] = useState(syncService.isRunning())
+  const [recentTasks, setRecentTasks] = useState<Task[]>([])
+
+  useEffect(() => {
+    fetchRecentTasks(selectedCompanyId || undefined, 10)
+      .then(setRecentTasks)
+      .catch(() => {})
+  }, [selectedCompanyId])
 
   const displayCompanies = selectedCompanyId
     ? companies.filter(c => c.id === selectedCompanyId)
@@ -290,6 +298,53 @@ export default function Dashboard() {
                   </div>
                 </div>
               )}
+
+              {/* ENGINE STATS */}
+              {recentTasks.length > 0 && (() => {
+                const completed = recentTasks.filter(t => t.status === 'completed')
+                const failed = recentTasks.filter(t => t.status === 'failed')
+                const totalProposed = recentTasks.reduce((s, t) => s + t.decisionsProposed, 0)
+                const totalExecuted = recentTasks.reduce((s, t) => s + t.decisionsExecuted, 0)
+                const totalRejected = recentTasks.reduce((s, t) => s + t.decisionsRejected, 0)
+                const lastTask = recentTasks[0]
+                const approvalRate = totalProposed > 0 ? Math.round((totalExecuted / totalProposed) * 100) : 0
+
+                return (
+                  <div className="bg-white rounded-2xl p-5 shadow-sm border border-gray-100">
+                    <div className="flex items-center gap-2 mb-3">
+                      <Brain size={16} className="text-purple-600" />
+                      <h3 className="font-semibold text-gray-900">Motor de IA</h3>
+                    </div>
+                    <div className="grid grid-cols-2 gap-3 mb-3">
+                      <div className="bg-green-50 rounded-xl p-3">
+                        <p className="text-xs text-green-600">Ciclos OK</p>
+                        <p className="text-lg font-bold text-green-700">{completed.length}</p>
+                      </div>
+                      <div className="bg-red-50 rounded-xl p-3">
+                        <p className="text-xs text-red-600">Falhas</p>
+                        <p className="text-lg font-bold text-red-700">{failed.length}</p>
+                      </div>
+                      <div className="bg-blue-50 rounded-xl p-3">
+                        <p className="text-xs text-blue-600">Decisoes</p>
+                        <p className="text-lg font-bold text-blue-700">{totalExecuted}<span className="text-xs font-normal text-blue-500">/{totalProposed}</span></p>
+                      </div>
+                      <div className="bg-purple-50 rounded-xl p-3">
+                        <p className="text-xs text-purple-600">Aprovacao</p>
+                        <p className="text-lg font-bold text-purple-700">{approvalRate}%</p>
+                      </div>
+                    </div>
+                    {totalRejected > 0 && (
+                      <p className="text-xs text-red-500 mb-2">{totalRejected} decisoes rejeitadas pelos guardrails</p>
+                    )}
+                    {lastTask && (
+                      <div className="flex items-center gap-2 text-xs text-gray-500 pt-2 border-t border-gray-100">
+                        {lastTask.status === 'completed' ? <CheckCircle size={12} className="text-green-500" /> : <XCircle size={12} className="text-red-500" />}
+                        <span>Ultimo ciclo: {new Date(lastTask.createdAt).toLocaleString('pt-BR', { hour: '2-digit', minute: '2-digit', day: '2-digit', month: '2-digit' })}</span>
+                      </div>
+                    )}
+                  </div>
+                )
+              })()}
 
               {/* RECENT ACTIONS */}
               <div className="bg-white rounded-2xl p-5 shadow-sm border border-gray-100">
