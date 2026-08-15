@@ -15,6 +15,15 @@ import {
   analyzeAudience,
   analyzeCreatives,
   analyzeOrchestrator,
+  analyzeLeads,
+  analyzeSales,
+  analyzeTraffic,
+  analyzeRegistration,
+  analyzeApps,
+  analyzeAwareness,
+  analyzeEngagement,
+  analyzeFunnel,
+  analyzeCopy,
   deduplicateDecisions,
 } from './analyzers'
 
@@ -41,6 +50,12 @@ const analyzerNames: Record<string, string> = {
   leads: 'Agente de Leads',
   sales: 'Agente de Vendas',
   traffic: 'Agente de Trafego',
+  registration: 'Agente de Cadastros',
+  apps: 'Agente de Apps',
+  awareness: 'Agente de Awareness',
+  engagement: 'Agente de Engajamento',
+  funnel: 'Agente de Funil',
+  copy: 'Agente de Copy',
 }
 
 export class AgentEngine {
@@ -66,7 +81,7 @@ export class AgentEngine {
       type: 'alert',
       priority: 'medium',
       subject: 'Orquestra IA ativada',
-      content: `Motor autonomo iniciado. 5 agentes analisando campanhas a cada ${Math.round(intervalMs / 60000)} minutos.`,
+      content: `Motor autonomo iniciado. 14 agentes analisando campanhas a cada ${Math.round(intervalMs / 60000)} minutos.`,
     })
 
     await this.runCycle()
@@ -131,6 +146,15 @@ export class AgentEngine {
           { id: 'analyzeAudience', role: 'audience', fn: analyzeAudience },
           { id: 'analyzeCreatives', role: 'creative', fn: analyzeCreatives },
           { id: 'analyzeOrchestrator', role: 'orchestrator', fn: analyzeOrchestrator },
+          { id: 'analyzeLeads', role: 'leads', fn: analyzeLeads },
+          { id: 'analyzeSales', role: 'sales', fn: analyzeSales },
+          { id: 'analyzeTraffic', role: 'traffic', fn: analyzeTraffic },
+          { id: 'analyzeRegistration', role: 'registration', fn: analyzeRegistration },
+          { id: 'analyzeApps', role: 'apps', fn: analyzeApps },
+          { id: 'analyzeAwareness', role: 'awareness', fn: analyzeAwareness },
+          { id: 'analyzeEngagement', role: 'engagement', fn: analyzeEngagement },
+          { id: 'analyzeFunnel', role: 'funnel', fn: analyzeFunnel },
+          { id: 'analyzeCopy', role: 'copy', fn: analyzeCopy },
         ]
 
         const rawDecisions: AgentDecision[] = []
