@@ -1,8 +1,7 @@
 import { useState, useEffect } from 'react'
 import { Zap, Play, Pause, AlertTriangle, TrendingDown, TrendingUp, DollarSign, Target, Plus, X, Loader2, Trash2, Pencil, Copy, Check } from 'lucide-react'
 import { useApp } from '../contexts/AppContext'
-import { fetchAutomationRules, toggleAutomationRule, updateAutomationRule, deleteAutomationRule } from '../lib/supabase-data'
-import { supabase } from '../lib/supabase'
+import { fetchAutomationRules, createAutomationRule, toggleAutomationRule, updateAutomationRule, deleteAutomationRule } from '../lib/supabase-data'
 
 interface Rule {
   id: string
@@ -186,19 +185,16 @@ export default function Automations() {
           actionParams: form.actionParams,
         })
       } else {
-        const { error } = await supabase.from('automation_rules').insert({
-          company_id: form.companyId,
+        await createAutomationRule({
+          companyId: form.companyId,
           name: form.name,
-          agent_role: form.agentRole,
-          condition_type: `${form.metric} ${form.operator} ${form.threshold}`,
+          agentRole: form.agentRole,
           metric: form.metric,
           operator: form.operator,
           threshold: form.threshold,
-          action_type: form.action,
-          action_params: form.actionParams,
-          enabled: true,
+          action: form.action,
+          actionParams: form.actionParams,
         })
-        if (error) throw error
       }
       await loadRules()
       setShowForm(false)

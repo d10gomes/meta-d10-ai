@@ -418,6 +418,31 @@ export async function updateAutomationRule(id: string, updates: {
   if (error) throw error
 }
 
+export async function createAutomationRule(rule: {
+  companyId: string
+  name: string
+  agentRole: string
+  metric: string
+  operator: string
+  threshold: number
+  action: string
+  actionParams: Record<string, unknown>
+}) {
+  const { error } = await supabase.from('automation_rules').insert({
+    company_id: rule.companyId,
+    name: rule.name,
+    agent_role: rule.agentRole,
+    condition_type: `${rule.metric} ${rule.operator} ${rule.threshold}`,
+    metric: rule.metric,
+    operator: rule.operator,
+    threshold: rule.threshold,
+    action_type: rule.action,
+    action_params: rule.actionParams,
+    enabled: true,
+  })
+  if (error) throw error
+}
+
 export async function deleteAutomationRule(id: string) {
   const { error } = await supabase.from('automation_rules').delete().eq('id', id)
   if (error) throw error
