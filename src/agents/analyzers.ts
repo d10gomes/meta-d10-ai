@@ -1,5 +1,6 @@
 import type { AgentRole } from '../types/company'
 import type { ActionType } from '../types/agent'
+import type { AgentThresholds } from '../lib/supabase-data'
 
 export interface CampaignData {
   id: string
@@ -43,7 +44,7 @@ export interface AgentDecision {
   impact: string
 }
 
-interface AnalyzerContext {
+export interface AnalyzerContext {
   campaigns: CampaignData[]
   totalBudget: number
   avgROAS: number
@@ -52,7 +53,14 @@ interface AnalyzerContext {
 }
 
 // Budget: redistribui verba de campanhas ruins para boas
-export function analyzeBudget(ctx: AnalyzerContext): AgentDecision[] {
+export function analyzeBudget(ctx: AnalyzerContext, cfg: AgentThresholds = {}): AgentDecision[] {
+  const minRoas = cfg.minRoasToScale ?? 3
+  const scaleMult = cfg.scaleMultiplier ?? 1.2
+  const maxRoas = cfg.maxRoasToCut ?? 0.8
+  const cutMult = cfg.cutMultiplier ?? 0.7
+  const cpaMult = cfg.cpaMultiplierThreshold ?? 3
+  const cpaCut = cfg.cpaCutMultiplier ?? 0.5
+
   const decisions: AgentDecision[] = []
   const active = ctx.campaigns.filter(c => c.status === 'ACTIVE' && c.metrics.spend > 0)
   if (active.length < 2) return decisions
@@ -60,48 +68,45 @@ export function analyzeBudget(ctx: AnalyzerContext): AgentDecision[] {
   for (const camp of active) {
     const cpa = camp.metrics.conversions > 0 ? camp.metrics.spend / camp.metrics.conversions : Infinity
 
-    // Campanha com ROAS alto e spend consistente: escalar 20%
-    if (camp.metrics.roas >= 3 && camp.metrics.spend >= 20 && camp.daysRunning >= 3) {
+    if (camp.metrics.roas >= minRoas && camp.metrics.spend >= 20 && camp.daysRunning >= 3) {
       decisions.push({
         agent: 'budget',
         campaignId: camp.id,
         campaignName: camp.name,
         action: 'scale_campaign',
-        params: { multiplier: 1.2 },
+        params: { multiplier: scaleMult },
         reason: `ROAS de ${camp.metrics.roas.toFixed(1)}x com R$${camp.metrics.spend.toFixed(0)} gastos. Performance consistente para escalar.`,
-        confidence: Math.min(0.95, 0.7 + (camp.metrics.roas - 3) * 0.05),
+        confidence: Math.min(0.95, 0.7 + (camp.metrics.roas - minRoas) * 0.05),
         priority: 'high',
-        impact: `Budget de R$${camp.budget} → R$${(camp.budget * 1.2).toFixed(0)}`,
+        impact: `Budget de R$${camp.budget} → R$${(camp.budget * scaleMult).toFixed(0)}`,
       })
     }
 
-    // Campanha gastando muito com ROAS negativo: reduzir 30%
-    if (camp.metrics.roas < 0.8 && camp.metrics.spend > 50 && camp.daysRunning >= 5) {
+    if (camp.metrics.roas < maxRoas && camp.metrics.spend > 50 && camp.daysRunning >= 5) {
       decisions.push({
         agent: 'budget',
         campaignId: camp.id,
         campaignName: camp.name,
         action: 'adjust_budget',
-        params: { multiplier: 0.7 },
-        reason: `ROAS de ${camp.metrics.roas.toFixed(2)}x abaixo de 1. Queimando budget sem retorno.`,
+        params: { multiplier: cutMult },
+        reason: `ROAS de ${camp.metrics.roas.toFixed(2)}x abaixo de ${maxRoas}. Queimando budget sem retorno.`,
         confidence: 0.85,
         priority: 'high',
-        impact: `Budget de R$${camp.budget} → R$${(camp.budget * 0.7).toFixed(0)}`,
+        impact: `Budget de R$${camp.budget} → R$${(camp.budget * cutMult).toFixed(0)}`,
       })
     }
 
-    // CPA explodiu (3x a media): reduzir budget
-    if (cpa > ctx.avgCPA * 3 && ctx.avgCPA > 0 && camp.metrics.conversions >= 3) {
+    if (cpa > ctx.avgCPA * cpaMult && ctx.avgCPA > 0 && camp.metrics.conversions >= 3) {
       decisions.push({
         agent: 'budget',
         campaignId: camp.id,
         campaignName: camp.name,
         action: 'adjust_budget',
-        params: { multiplier: 0.5 },
-        reason: `CPA de R$${cpa.toFixed(2)} esta 3x acima da media (R$${ctx.avgCPA.toFixed(2)}). Reduzindo budget pela metade.`,
+        params: { multiplier: cpaCut },
+        reason: `CPA de R$${cpa.toFixed(2)} esta ${cpaMult}x acima da media (R$${ctx.avgCPA.toFixed(2)}). Reduzindo budget.`,
         confidence: 0.8,
         priority: 'critical',
-        impact: `Budget de R$${camp.budget} → R$${(camp.budget * 0.5).toFixed(0)}`,
+        impact: `Budget de R$${camp.budget} → R$${(camp.budget * cpaCut).toFixed(0)}`,
       })
     }
   }
@@ -110,14 +115,19 @@ export function analyzeBudget(ctx: AnalyzerContext): AgentDecision[] {
 }
 
 // Analytics: detecta anomalias e tendencias perigosas
-export function analyzePerformance(ctx: AnalyzerContext): AgentDecision[] {
+export function analyzePerformance(ctx: AnalyzerContext, cfg: AgentThresholds = {}): AgentDecision[] {
+  const ctrDropAlert = cfg.ctrDropAlertPercent ?? 40
+  const cpaRiseAlert = cfg.cpaRiseAlertPercent ?? 50
+  const maxSpendNoConv = cfg.maxSpendNoConversions ?? 100
+  const minDaysNoConv = cfg.minDaysNoConversions ?? 5
+  const roasDropCut = cfg.roasDropCutPercent ?? 50
+
   const decisions: AgentDecision[] = []
 
   for (const camp of ctx.campaigns) {
     if (camp.status !== 'ACTIVE' || camp.metrics.spend === 0) continue
 
-    // CTR caiu mais de 40%: fadiga de criativo
-    if (camp.trend.ctrDelta < -40 && camp.metrics.impressions > 500) {
+    if (camp.trend.ctrDelta < -ctrDropAlert && camp.metrics.impressions > 500) {
       decisions.push({
         agent: 'analytics',
         campaignId: camp.id,
@@ -131,8 +141,7 @@ export function analyzePerformance(ctx: AnalyzerContext): AgentDecision[] {
       })
     }
 
-    // CPA subiu mais de 50%: alerta critico
-    if (camp.trend.cpaDelta > 50 && camp.metrics.conversions >= 2) {
+    if (camp.trend.cpaDelta > cpaRiseAlert && camp.metrics.conversions >= 2) {
       decisions.push({
         agent: 'analytics',
         campaignId: camp.id,
@@ -146,8 +155,7 @@ export function analyzePerformance(ctx: AnalyzerContext): AgentDecision[] {
       })
     }
 
-    // Spend sem conversoes por mais de 5 dias
-    if (camp.metrics.spend > 100 && camp.metrics.conversions === 0 && camp.daysRunning >= 5) {
+    if (camp.metrics.spend > maxSpendNoConv && camp.metrics.conversions === 0 && camp.daysRunning >= minDaysNoConv) {
       decisions.push({
         agent: 'analytics',
         campaignId: camp.id,
@@ -161,8 +169,7 @@ export function analyzePerformance(ctx: AnalyzerContext): AgentDecision[] {
       })
     }
 
-    // ROAS caiu mais de 50%: reduzir budget
-    if (camp.trend.roasDelta < -50 && camp.metrics.roas < 1.5 && camp.metrics.spend > 30) {
+    if (camp.trend.roasDelta < -roasDropCut && camp.metrics.roas < 1.5 && camp.metrics.spend > 30) {
       decisions.push({
         agent: 'analytics',
         campaignId: camp.id,
@@ -181,14 +188,17 @@ export function analyzePerformance(ctx: AnalyzerContext): AgentDecision[] {
 }
 
 // Audience: detecta saturacao e recomenda acoes
-export function analyzeAudience(ctx: AnalyzerContext): AgentDecision[] {
+export function analyzeAudience(ctx: AnalyzerContext, cfg: AgentThresholds = {}): AgentDecision[] {
+  const freqAlert = cfg.frequencyAlertThreshold ?? 4
+  const freqPause = cfg.frequencyPauseThreshold ?? 6
+  const minCtr = cfg.minCtrToPause ?? 1
+
   const decisions: AgentDecision[] = []
 
   for (const camp of ctx.campaigns) {
     if (camp.status !== 'ACTIVE') continue
 
-    // Frequencia > 4: publico saturado
-    if (camp.metrics.frequency > 4 && camp.metrics.reach > 500) {
+    if (camp.metrics.frequency > freqAlert && camp.metrics.reach > 500) {
       decisions.push({
         agent: 'audience',
         campaignId: camp.id,
@@ -202,8 +212,7 @@ export function analyzeAudience(ctx: AnalyzerContext): AgentDecision[] {
       })
     }
 
-    // Frequencia > 6 com CTR baixo: pausar e recriar
-    if (camp.metrics.frequency > 6 && camp.metrics.ctr < 1) {
+    if (camp.metrics.frequency > freqPause && camp.metrics.ctr < minCtr) {
       decisions.push({
         agent: 'audience',
         campaignId: camp.id,
@@ -222,14 +231,16 @@ export function analyzeAudience(ctx: AnalyzerContext): AgentDecision[] {
 }
 
 // Creative: detecta fadiga e performance de criativos
-export function analyzeCreatives(ctx: AnalyzerContext): AgentDecision[] {
+export function analyzeCreatives(ctx: AnalyzerContext, cfg: AgentThresholds = {}): AgentDecision[] {
+  const ctrBelowPct = (cfg.ctrBelowAvgPercent ?? 50) / 100
+  const cpcAboveMult = cfg.cpcAboveAvgMultiplier ?? 3
+
   const decisions: AgentDecision[] = []
 
   for (const camp of ctx.campaigns) {
     if (camp.status !== 'ACTIVE' || camp.metrics.impressions < 500) continue
 
-    // CTR muito abaixo da media da conta: criativo fraco
-    if (camp.metrics.ctr < ctx.avgCTR * 0.5 && ctx.avgCTR > 0) {
+    if (camp.metrics.ctr < ctx.avgCTR * (1 - ctrBelowPct) && ctx.avgCTR > 0) {
       decisions.push({
         agent: 'creative',
         campaignId: camp.id,
@@ -243,8 +254,7 @@ export function analyzeCreatives(ctx: AnalyzerContext): AgentDecision[] {
       })
     }
 
-    // CPC muito alto comparado com a media: criativo ou segmentacao ruim
-    if (camp.metrics.cpc > ctx.avgCTR * 3 && camp.metrics.clicks > 10) {
+    if (camp.metrics.cpc > ctx.avgCTR * cpcAboveMult && camp.metrics.clicks > 10) {
       decisions.push({
         agent: 'creative',
         campaignId: camp.id,
@@ -263,13 +273,16 @@ export function analyzeCreatives(ctx: AnalyzerContext): AgentDecision[] {
 }
 
 // Orchestrator: visao macro, resolve conflitos, campanhas mortas
-export function analyzeOrchestrator(ctx: AnalyzerContext): AgentDecision[] {
+export function analyzeOrchestrator(ctx: AnalyzerContext, cfg: AgentThresholds = {}): AgentDecision[] {
+  const minDaysNoImp = cfg.minDaysNoImpressions ?? 3
+  const minRoas = cfg.minRoasToScale ?? 5
+  const scaleMult = cfg.scaleMultiplier ?? 1.3
+
   const decisions: AgentDecision[] = []
   const active = ctx.campaigns.filter(c => c.status === 'ACTIVE')
 
-  // Campanhas ativas sem impressoes em 3+ dias: reativar ou matar
   for (const camp of active) {
-    if (camp.metrics.impressions === 0 && camp.daysRunning >= 3) {
+    if (camp.metrics.impressions === 0 && camp.daysRunning >= minDaysNoImp) {
       decisions.push({
         agent: 'orchestrator',
         campaignId: camp.id,
@@ -292,17 +305,17 @@ export function analyzeOrchestrator(ctx: AnalyzerContext): AgentDecision[] {
 
     if (sorted.length > 0) {
       const top = sorted[0]
-      if (top.metrics.roas >= 5 && top.daysRunning >= 5) {
+      if (top.metrics.roas >= minRoas && top.daysRunning >= 5) {
         decisions.push({
           agent: 'orchestrator',
           campaignId: top.id,
           campaignName: top.name,
           action: 'scale_campaign',
-          params: { multiplier: 1.3 },
-          reason: `Melhor campanha da conta com ROAS ${top.metrics.roas.toFixed(1)}x. Escalando 30% para maximizar retorno.`,
+          params: { multiplier: scaleMult },
+          reason: `Melhor campanha da conta com ROAS ${top.metrics.roas.toFixed(1)}x. Escalando ${((scaleMult - 1) * 100).toFixed(0)}% para maximizar retorno.`,
           confidence: 0.9,
           priority: 'high',
-          impact: `Budget de R$${top.budget} → R$${(top.budget * 1.3).toFixed(0)}`,
+          impact: `Budget de R$${top.budget} → R$${(top.budget * scaleMult).toFixed(0)}`,
         })
       }
     }
@@ -312,15 +325,19 @@ export function analyzeOrchestrator(ctx: AnalyzerContext): AgentDecision[] {
 }
 
 // Leads: analisa geracao de leads e custo por lead
-export function analyzeLeads(ctx: AnalyzerContext): AgentDecision[] {
+export function analyzeLeads(ctx: AnalyzerContext, cfg: AgentThresholds = {}): AgentDecision[] {
+  const minClicksNoConv = cfg.minClicksNoConversion ?? 50
+  const cplAboveMult = cfg.cplAboveAvgMultiplier ?? 2.5
+  const cplBelowPct = (cfg.cplBelowAvgPercent ?? 60) / 100
+  const scaleMult = cfg.scaleMultiplier ?? 1.25
+
   const decisions: AgentDecision[] = []
 
   for (const camp of ctx.campaigns) {
     if (camp.status !== 'ACTIVE' || camp.metrics.spend === 0) continue
     const cpl = camp.metrics.conversions > 0 ? camp.metrics.spend / camp.metrics.conversions : Infinity
 
-    // Muitos cliques sem conversao: problema no formulario/landing page
-    if (camp.metrics.clicks > 50 && camp.metrics.conversions === 0 && camp.daysRunning >= 3) {
+    if (camp.metrics.clicks > minClicksNoConv && camp.metrics.conversions === 0 && camp.daysRunning >= 3) {
       decisions.push({
         agent: 'leads',
         campaignId: camp.id,
@@ -334,8 +351,7 @@ export function analyzeLeads(ctx: AnalyzerContext): AgentDecision[] {
       })
     }
 
-    // Custo por lead 2.5x acima da media: reduzir budget
-    if (cpl > ctx.avgCPA * 2.5 && ctx.avgCPA > 0 && camp.metrics.conversions >= 2) {
+    if (cpl > ctx.avgCPA * cplAboveMult && ctx.avgCPA > 0 && camp.metrics.conversions >= 2) {
       decisions.push({
         agent: 'leads',
         campaignId: camp.id,
@@ -349,14 +365,13 @@ export function analyzeLeads(ctx: AnalyzerContext): AgentDecision[] {
       })
     }
 
-    // Bom volume de leads com custo baixo: escalar
-    if (camp.metrics.conversions >= 5 && cpl < ctx.avgCPA * 0.6 && ctx.avgCPA > 0 && camp.daysRunning >= 3) {
+    if (camp.metrics.conversions >= 5 && cpl < ctx.avgCPA * (1 - cplBelowPct) && ctx.avgCPA > 0 && camp.daysRunning >= 3) {
       decisions.push({
         agent: 'leads',
         campaignId: camp.id,
         campaignName: camp.name,
         action: 'scale_campaign',
-        params: { multiplier: 1.25 },
+        params: { multiplier: scaleMult },
         reason: `Custo por lead de R$${cpl.toFixed(2)} — ${((1 - cpl / ctx.avgCPA) * 100).toFixed(0)}% abaixo da media. Maquina de leads eficiente.`,
         confidence: 0.85,
         priority: 'high',
@@ -369,14 +384,17 @@ export function analyzeLeads(ctx: AnalyzerContext): AgentDecision[] {
 }
 
 // Sales: analisa conversao em vendas e oportunidades de retargeting
-export function analyzeSales(ctx: AnalyzerContext): AgentDecision[] {
+export function analyzeSales(ctx: AnalyzerContext, cfg: AgentThresholds = {}): AgentDecision[] {
+  const roasDropRetarget = cfg.roasDropRetargetPercent ?? 20
+  const minRoasScale = cfg.minRoasToScale ?? 4
+  const maxSpendNoRev = cfg.maxSpendNoRevenue ?? 80
+
   const decisions: AgentDecision[] = []
 
   for (const camp of ctx.campaigns) {
     if (camp.status !== 'ACTIVE' || camp.metrics.spend === 0) continue
 
-    // ROAS bom mas conversoes caindo: oportunidade de retargeting
-    if (camp.metrics.roas >= 2 && camp.trend.roasDelta < -20 && camp.metrics.conversions >= 3) {
+    if (camp.metrics.roas >= 2 && camp.trend.roasDelta < -roasDropRetarget && camp.metrics.conversions >= 3) {
       decisions.push({
         agent: 'sales',
         campaignId: camp.id,
@@ -390,8 +408,7 @@ export function analyzeSales(ctx: AnalyzerContext): AgentDecision[] {
       })
     }
 
-    // Alta receita com custo controlado: campanha de vendas top performer
-    if (camp.metrics.revenue > 0 && camp.metrics.roas >= 4 && camp.daysRunning >= 5) {
+    if (camp.metrics.revenue > 0 && camp.metrics.roas >= minRoasScale && camp.daysRunning >= 5) {
       decisions.push({
         agent: 'sales',
         campaignId: camp.id,
@@ -405,8 +422,7 @@ export function analyzeSales(ctx: AnalyzerContext): AgentDecision[] {
       })
     }
 
-    // Gastando muito sem gerar receita: funil quebrado
-    if (camp.metrics.spend > 80 && camp.metrics.revenue === 0 && camp.metrics.conversions === 0 && camp.daysRunning >= 4) {
+    if (camp.metrics.spend > maxSpendNoRev && camp.metrics.revenue === 0 && camp.metrics.conversions === 0 && camp.daysRunning >= 4) {
       decisions.push({
         agent: 'sales',
         campaignId: camp.id,
@@ -425,14 +441,18 @@ export function analyzeSales(ctx: AnalyzerContext): AgentDecision[] {
 }
 
 // Traffic: analisa qualidade do trafego e eficiencia dos cliques
-export function analyzeTraffic(ctx: AnalyzerContext): AgentDecision[] {
+export function analyzeTraffic(ctx: AnalyzerContext, cfg: AgentThresholds = {}): AgentDecision[] {
+  const minCtrAlert = cfg.minCtrAlert ?? 0.5
+  const spendRise = cfg.spendRisePercent ?? 20
+  const ctrDrop = cfg.ctrDropPercent ?? 25
+  const ctrAboveMult = cfg.ctrAboveAvgMultiplier ?? 1.8
+
   const decisions: AgentDecision[] = []
 
   for (const camp of ctx.campaigns) {
     if (camp.status !== 'ACTIVE' || camp.metrics.impressions < 200) continue
 
-    // CTR muito baixo: trafego de ma qualidade ou segmentacao ruim
-    if (camp.metrics.ctr < 0.5 && camp.metrics.impressions > 1000) {
+    if (camp.metrics.ctr < minCtrAlert && camp.metrics.impressions > 1000) {
       decisions.push({
         agent: 'traffic',
         campaignId: camp.id,
@@ -446,8 +466,7 @@ export function analyzeTraffic(ctx: AnalyzerContext): AgentDecision[] {
       })
     }
 
-    // Spend subindo mas CTR caindo: trafego piorando
-    if (camp.trend.spendDelta > 20 && camp.trend.ctrDelta < -25 && camp.metrics.spend > 30) {
+    if (camp.trend.spendDelta > spendRise && camp.trend.ctrDelta < -ctrDrop && camp.metrics.spend > 30) {
       decisions.push({
         agent: 'traffic',
         campaignId: camp.id,
@@ -461,8 +480,7 @@ export function analyzeTraffic(ctx: AnalyzerContext): AgentDecision[] {
       })
     }
 
-    // CTR excelente acima da media: campanha eficiente em gerar trafego qualificado
-    if (camp.metrics.ctr > ctx.avgCTR * 1.8 && ctx.avgCTR > 0 && camp.metrics.clicks > 30) {
+    if (camp.metrics.ctr > ctx.avgCTR * ctrAboveMult && ctx.avgCTR > 0 && camp.metrics.clicks > 30) {
       decisions.push({
         agent: 'traffic',
         campaignId: camp.id,
@@ -481,14 +499,17 @@ export function analyzeTraffic(ctx: AnalyzerContext): AgentDecision[] {
 }
 
 // Registration: analisa campanhas de cadastro e signup
-export function analyzeRegistration(ctx: AnalyzerContext): AgentDecision[] {
+export function analyzeRegistration(ctx: AnalyzerContext, cfg: AgentThresholds = {}): AgentDecision[] {
+  const minCtrForm = cfg.minCtrFormAlert ?? 2
+  const cpaRise = cfg.cpaRisePercent ?? 40
+  const cprBelowPct = (cfg.cprBelowAvgPercent ?? 70) / 100
+
   const decisions: AgentDecision[] = []
 
   for (const camp of ctx.campaigns) {
     if (camp.status !== 'ACTIVE' || camp.metrics.spend === 0) continue
 
-    // Alto CTR mas zero conversoes: formulario com problema
-    if (camp.metrics.ctr > 2 && camp.metrics.clicks > 30 && camp.metrics.conversions === 0 && camp.daysRunning >= 2) {
+    if (camp.metrics.ctr > minCtrForm && camp.metrics.clicks > 30 && camp.metrics.conversions === 0 && camp.daysRunning >= 2) {
       decisions.push({
         agent: 'registration',
         campaignId: camp.id,
@@ -502,8 +523,7 @@ export function analyzeRegistration(ctx: AnalyzerContext): AgentDecision[] {
       })
     }
 
-    // Custo por cadastro subindo rapido
-    if (camp.trend.cpaDelta > 40 && camp.metrics.conversions >= 3) {
+    if (camp.trend.cpaDelta > cpaRise && camp.metrics.conversions >= 3) {
       const cpr = camp.metrics.spend / camp.metrics.conversions
       decisions.push({
         agent: 'registration',
@@ -518,10 +538,9 @@ export function analyzeRegistration(ctx: AnalyzerContext): AgentDecision[] {
       })
     }
 
-    // Bom custo por cadastro estavel: escalar
     if (camp.metrics.conversions >= 5 && camp.trend.cpaDelta <= 10 && camp.trend.cpaDelta >= -30) {
       const cpr = camp.metrics.spend / camp.metrics.conversions
-      if (cpr < ctx.avgCPA * 0.7 && ctx.avgCPA > 0) {
+      if (cpr < ctx.avgCPA * (1 - cprBelowPct) && ctx.avgCPA > 0) {
         decisions.push({
           agent: 'registration',
           campaignId: camp.id,
@@ -541,14 +560,18 @@ export function analyzeRegistration(ctx: AnalyzerContext): AgentDecision[] {
 }
 
 // Apps: analisa campanhas de instalacao de app
-export function analyzeApps(ctx: AnalyzerContext): AgentDecision[] {
+export function analyzeApps(ctx: AnalyzerContext, cfg: AgentThresholds = {}): AgentDecision[] {
+  const maxSpendNoInst = cfg.maxSpendNoInstall ?? 60
+  const cpiAboveMult = cfg.cpiAboveAvgMultiplier ?? 2
+  const cpiBelowPct = (cfg.cpiBelowAvgPercent ?? 50) / 100
+  const scaleMult = cfg.scaleMultiplier ?? 1.3
+
   const decisions: AgentDecision[] = []
 
   for (const camp of ctx.campaigns) {
     if (camp.status !== 'ACTIVE' || camp.metrics.spend === 0) continue
 
-    // Alto spend sem installs (conversoes)
-    if (camp.metrics.spend > 60 && camp.metrics.conversions === 0 && camp.daysRunning >= 3) {
+    if (camp.metrics.spend > maxSpendNoInst && camp.metrics.conversions === 0 && camp.daysRunning >= 3) {
       decisions.push({
         agent: 'apps',
         campaignId: camp.id,
@@ -562,10 +585,9 @@ export function analyzeApps(ctx: AnalyzerContext): AgentDecision[] {
       })
     }
 
-    // CPI (custo por instalacao) muito alto
     if (camp.metrics.conversions >= 3) {
       const cpi = camp.metrics.spend / camp.metrics.conversions
-      if (cpi > ctx.avgCPA * 2 && ctx.avgCPA > 0) {
+      if (cpi > ctx.avgCPA * cpiAboveMult && ctx.avgCPA > 0) {
         decisions.push({
           agent: 'apps',
           campaignId: camp.id,
@@ -580,16 +602,15 @@ export function analyzeApps(ctx: AnalyzerContext): AgentDecision[] {
       }
     }
 
-    // CPI baixo com volume: escalar
     if (camp.metrics.conversions >= 8) {
       const cpi = camp.metrics.spend / camp.metrics.conversions
-      if (cpi < ctx.avgCPA * 0.5 && ctx.avgCPA > 0 && camp.daysRunning >= 4) {
+      if (cpi < ctx.avgCPA * (1 - cpiBelowPct) && ctx.avgCPA > 0 && camp.daysRunning >= 4) {
         decisions.push({
           agent: 'apps',
           campaignId: camp.id,
           campaignName: camp.name,
           action: 'scale_campaign',
-          params: { multiplier: 1.3 },
+          params: { multiplier: scaleMult },
           reason: `CPI de R$${cpi.toFixed(2)} — metade da media. Volume alto de instalacoes para escalar.`,
           confidence: 0.85,
           priority: 'high',
@@ -603,7 +624,12 @@ export function analyzeApps(ctx: AnalyzerContext): AgentDecision[] {
 }
 
 // Awareness: analisa alcance, CPM e eficiencia de marca
-export function analyzeAwareness(ctx: AnalyzerContext): AgentDecision[] {
+export function analyzeAwareness(ctx: AnalyzerContext, cfg: AgentThresholds = {}): AgentDecision[] {
+  const cpmAboveMult = cfg.cpmAboveAvgMultiplier ?? 2.5
+  const cpmBelowPct = (cfg.cpmBelowAvgPercent ?? 50) / 100
+  const minReach = cfg.minReachToScale ?? 1000
+  const maxSpendLow = cfg.maxSpendLowReach ?? 50
+
   const decisions: AgentDecision[] = []
   const active = ctx.campaigns.filter(c => c.status === 'ACTIVE' && c.metrics.impressions > 0)
   if (active.length === 0) return decisions
@@ -611,8 +637,7 @@ export function analyzeAwareness(ctx: AnalyzerContext): AgentDecision[] {
   const avgCPM = active.reduce((s, c) => s + c.metrics.cpm, 0) / active.length
 
   for (const camp of active) {
-    // CPM muito acima da media: alcance caro
-    if (camp.metrics.cpm > avgCPM * 2.5 && avgCPM > 0 && camp.metrics.spend > 20) {
+    if (camp.metrics.cpm > avgCPM * cpmAboveMult && avgCPM > 0 && camp.metrics.spend > 20) {
       decisions.push({
         agent: 'awareness',
         campaignId: camp.id,
@@ -626,8 +651,7 @@ export function analyzeAwareness(ctx: AnalyzerContext): AgentDecision[] {
       })
     }
 
-    // Bom alcance com CPM baixo: campanha de awareness eficiente
-    if (camp.metrics.reach > 1000 && camp.metrics.cpm < avgCPM * 0.5 && avgCPM > 0) {
+    if (camp.metrics.reach > minReach && camp.metrics.cpm < avgCPM * (1 - cpmBelowPct) && avgCPM > 0) {
       decisions.push({
         agent: 'awareness',
         campaignId: camp.id,
@@ -641,8 +665,7 @@ export function analyzeAwareness(ctx: AnalyzerContext): AgentDecision[] {
       })
     }
 
-    // Alcance muito baixo com spend alto: publico esgotado
-    if (camp.metrics.reach < 200 && camp.metrics.spend > 50 && camp.daysRunning >= 5) {
+    if (camp.metrics.reach < 200 && camp.metrics.spend > maxSpendLow && camp.daysRunning >= 5) {
       decisions.push({
         agent: 'awareness',
         campaignId: camp.id,
@@ -661,14 +684,18 @@ export function analyzeAwareness(ctx: AnalyzerContext): AgentDecision[] {
 }
 
 // Engagement: analisa interacao e engajamento do publico
-export function analyzeEngagement(ctx: AnalyzerContext): AgentDecision[] {
+export function analyzeEngagement(ctx: AnalyzerContext, cfg: AgentThresholds = {}): AgentDecision[] {
+  const minImpNoClicks = cfg.minImpressionsNoClicks ?? 2000
+  const maxClicks = cfg.maxClicksForAlert ?? 5
+  const ctrDrop = cfg.ctrDropPercent ?? 30
+  const ctrAboveMult = cfg.ctrAboveAvgMultiplier ?? 2
+
   const decisions: AgentDecision[] = []
 
   for (const camp of ctx.campaigns) {
     if (camp.status !== 'ACTIVE' || camp.metrics.impressions < 500) continue
 
-    // Muitas impressoes sem nenhum clique: conteudo nao engaja
-    if (camp.metrics.impressions > 2000 && camp.metrics.clicks < 5) {
+    if (camp.metrics.impressions > minImpNoClicks && camp.metrics.clicks < maxClicks) {
       decisions.push({
         agent: 'engagement',
         campaignId: camp.id,
@@ -682,8 +709,7 @@ export function analyzeEngagement(ctx: AnalyzerContext): AgentDecision[] {
       })
     }
 
-    // Engajamento caindo: fadiga de conteudo
-    if (camp.trend.ctrDelta < -30 && camp.metrics.ctr < ctx.avgCTR * 0.7 && ctx.avgCTR > 0) {
+    if (camp.trend.ctrDelta < -ctrDrop && camp.metrics.ctr < ctx.avgCTR * 0.7 && ctx.avgCTR > 0) {
       decisions.push({
         agent: 'engagement',
         campaignId: camp.id,
@@ -697,8 +723,7 @@ export function analyzeEngagement(ctx: AnalyzerContext): AgentDecision[] {
       })
     }
 
-    // Campanha com alto engajamento e conversao: escalar
-    if (camp.metrics.ctr > ctx.avgCTR * 2 && ctx.avgCTR > 0 && camp.metrics.conversions >= 3 && camp.metrics.roas >= 1.5) {
+    if (camp.metrics.ctr > ctx.avgCTR * ctrAboveMult && ctx.avgCTR > 0 && camp.metrics.conversions >= 3 && camp.metrics.roas >= 1.5) {
       decisions.push({
         agent: 'engagement',
         campaignId: camp.id,
@@ -717,14 +742,17 @@ export function analyzeEngagement(ctx: AnalyzerContext): AgentDecision[] {
 }
 
 // Funnel: analisa funil completo e identifica gargalos
-export function analyzeFunnel(ctx: AnalyzerContext): AgentDecision[] {
+export function analyzeFunnel(ctx: AnalyzerContext, cfg: AgentThresholds = {}): AgentDecision[] {
+  const minClicksNoConv = cfg.minClicksNoConversion ?? 40
+  const cpaRise = cfg.cpaRisePercent ?? 60
+  const minConvRate = cfg.minConvRateToScale ?? 3
+
   const decisions: AgentDecision[] = []
 
   for (const camp of ctx.campaigns) {
     if (camp.status !== 'ACTIVE' || camp.metrics.spend === 0) continue
 
-    // Funil vazando: boas impressoes + cliques mas zero conversoes
-    if (camp.metrics.clicks > 40 && camp.metrics.conversions === 0 && camp.metrics.spend > 40 && camp.daysRunning >= 3) {
+    if (camp.metrics.clicks > minClicksNoConv && camp.metrics.conversions === 0 && camp.metrics.spend > 40 && camp.daysRunning >= 3) {
       decisions.push({
         agent: 'funnel',
         campaignId: camp.id,
@@ -738,8 +766,7 @@ export function analyzeFunnel(ctx: AnalyzerContext): AgentDecision[] {
       })
     }
 
-    // Taxa de conversao caindo drasticamente
-    if (camp.metrics.conversions >= 2 && camp.trend.cpaDelta > 60) {
+    if (camp.metrics.conversions >= 2 && camp.trend.cpaDelta > cpaRise) {
       decisions.push({
         agent: 'funnel',
         campaignId: camp.id,
@@ -753,10 +780,9 @@ export function analyzeFunnel(ctx: AnalyzerContext): AgentDecision[] {
       })
     }
 
-    // Funil saudavel e eficiente: escalar
     if (camp.metrics.conversions >= 5 && camp.metrics.roas >= 2.5 && camp.trend.roasDelta >= -10 && camp.daysRunning >= 5) {
       const convRate = camp.metrics.clicks > 0 ? (camp.metrics.conversions / camp.metrics.clicks) * 100 : 0
-      if (convRate > 3) {
+      if (convRate > minConvRate) {
         decisions.push({
           agent: 'funnel',
           campaignId: camp.id,
@@ -776,14 +802,17 @@ export function analyzeFunnel(ctx: AnalyzerContext): AgentDecision[] {
 }
 
 // Copy: analisa eficacia da copy e mensagem dos anuncios
-export function analyzeCopy(ctx: AnalyzerContext): AgentDecision[] {
+export function analyzeCopy(ctx: AnalyzerContext, cfg: AgentThresholds = {}): AgentDecision[] {
+  const ctrBelowPct = (cfg.ctrBelowAvgPercent ?? 40) / 100
+  const ctrDropPct = cfg.ctrDropPercent ?? 35
+  const minDaysFatigue = cfg.minDaysCopyFatigue ?? 7
+
   const decisions: AgentDecision[] = []
 
   for (const camp of ctx.campaigns) {
     if (camp.status !== 'ACTIVE' || camp.metrics.impressions < 500) continue
 
-    // CTR muito abaixo da media: copy nao atrai cliques
-    if (camp.metrics.ctr < ctx.avgCTR * 0.4 && ctx.avgCTR > 0 && camp.metrics.impressions > 1000) {
+    if (camp.metrics.ctr < ctx.avgCTR * (1 - ctrBelowPct) && ctx.avgCTR > 0 && camp.metrics.impressions > 1000) {
       decisions.push({
         agent: 'copy',
         campaignId: camp.id,
@@ -812,8 +841,7 @@ export function analyzeCopy(ctx: AnalyzerContext): AgentDecision[] {
       })
     }
 
-    // CTR caindo rapido: copy cansou
-    if (camp.trend.ctrDelta < -35 && camp.metrics.ctr < 1.5 && camp.daysRunning >= 7) {
+    if (camp.trend.ctrDelta < -ctrDropPct && camp.metrics.ctr < 1.5 && camp.daysRunning >= minDaysFatigue) {
       decisions.push({
         agent: 'copy',
         campaignId: camp.id,

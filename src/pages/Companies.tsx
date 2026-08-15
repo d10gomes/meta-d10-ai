@@ -1,7 +1,7 @@
 import { useState } from 'react'
 import { Plus, TrendingUp, Users, Target, Zap, X, Loader2 } from 'lucide-react'
 import { useApp } from '../contexts/AppContext'
-import { createCompany, createDefaultAgents } from '../lib/supabase-data'
+import { createCompany, createDefaultAgents, createDefaultAgentConfigs } from '../lib/supabase-data'
 
 export default function Companies() {
   const { companies, setSelectedCompanyId, setActivePage, refresh, dataSource } = useApp()
@@ -25,6 +25,7 @@ export default function Companies() {
       })
 
       await createDefaultAgents(result.id)
+      await createDefaultAgentConfigs(result.id)
 
       await refresh()
       setShowForm(false)

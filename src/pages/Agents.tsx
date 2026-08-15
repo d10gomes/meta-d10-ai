@@ -1,8 +1,8 @@
 import { useState, useEffect, useCallback } from 'react'
-import { Crown, MessageCircle, ShoppingCart, ExternalLink, UserPlus, Smartphone, Eye, Heart, Filter, Palette, Users, DollarSign, PenTool, BarChart3, ArrowRight, Clock, CheckCircle, XCircle, AlertTriangle, ChevronDown, ChevronRight, Zap, Play, Loader2, RefreshCw } from 'lucide-react'
+import { Crown, MessageCircle, ShoppingCart, ExternalLink, UserPlus, Smartphone, Eye, Heart, Filter, Palette, Users, DollarSign, PenTool, BarChart3, ArrowRight, Clock, CheckCircle, XCircle, AlertTriangle, ChevronDown, ChevronRight, Zap, Play, Loader2, RefreshCw, Settings, Save, RotateCcw } from 'lucide-react'
 import { useApp } from '../contexts/AppContext'
 import { AGENT_ROLES, type AgentRole } from '../types/company'
-import { fetchRecentTasks, journeyLog, type Task } from '../lib/supabase-data'
+import { fetchRecentTasks, journeyLog, fetchAgentConfigs, upsertAgentConfig, createDefaultAgentConfigs, DEFAULT_AGENT_CONFIGS, type Task, type AgentConfig, type AgentThresholds } from '../lib/supabase-data'
 
 const iconMap: Record<string, React.ElementType> = {
   Crown, MessageCircle, ShoppingCart, ExternalLink, UserPlus, Smartphone,
@@ -57,7 +57,89 @@ interface JourneyStep {
   created_at: string
 }
 
-type ViewTab = 'agents' | 'tasks'
+type ViewTab = 'agents' | 'tasks' | 'config'
+
+const THRESHOLD_LABELS: Record<string, Record<string, { label: string; unit: string; min: number; max: number; step: number }>> = {
+  budget: {
+    minRoasToScale: { label: 'ROAS minimo para escalar', unit: 'x', min: 1, max: 10, step: 0.5 },
+    scaleMultiplier: { label: 'Multiplicador de escala', unit: 'x', min: 1.05, max: 2, step: 0.05 },
+    maxRoasToCut: { label: 'ROAS maximo para cortar', unit: 'x', min: 0.1, max: 2, step: 0.1 },
+    cutMultiplier: { label: 'Multiplicador de corte', unit: 'x', min: 0.3, max: 0.9, step: 0.05 },
+    cpaMultiplierThreshold: { label: 'CPA acima da media para cortar', unit: 'x', min: 1.5, max: 5, step: 0.5 },
+    cpaCutMultiplier: { label: 'Multiplicador corte por CPA', unit: 'x', min: 0.3, max: 0.9, step: 0.05 },
+  },
+  analytics: {
+    ctrDropAlertPercent: { label: 'Queda de CTR para alertar', unit: '%', min: 10, max: 80, step: 5 },
+    cpaRiseAlertPercent: { label: 'Subida de CPA para alertar', unit: '%', min: 20, max: 100, step: 5 },
+    maxSpendNoConversions: { label: 'Gasto max sem conversoes', unit: 'R$', min: 30, max: 500, step: 10 },
+    minDaysNoConversions: { label: 'Dias sem conversao para pausar', unit: 'dias', min: 2, max: 14, step: 1 },
+    roasDropCutPercent: { label: 'Queda de ROAS para cortar', unit: '%', min: 20, max: 80, step: 5 },
+  },
+  audience: {
+    frequencyAlertThreshold: { label: 'Frequencia para alertar', unit: 'x', min: 2, max: 8, step: 0.5 },
+    frequencyPauseThreshold: { label: 'Frequencia para pausar', unit: 'x', min: 3, max: 10, step: 0.5 },
+    minCtrToPause: { label: 'CTR minimo (abaixo pausa)', unit: '%', min: 0.3, max: 3, step: 0.1 },
+  },
+  creative: {
+    ctrBelowAvgPercent: { label: 'CTR abaixo da media para alertar', unit: '%', min: 20, max: 80, step: 5 },
+    cpcAboveAvgMultiplier: { label: 'CPC acima da media para alertar', unit: 'x', min: 1.5, max: 5, step: 0.5 },
+  },
+  orchestrator: {
+    minDaysNoImpressions: { label: 'Dias sem impressoes para matar', unit: 'dias', min: 1, max: 10, step: 1 },
+    minRoasToScale: { label: 'ROAS minimo para escalar top', unit: 'x', min: 2, max: 10, step: 0.5 },
+    scaleMultiplier: { label: 'Multiplicador de escala', unit: 'x', min: 1.1, max: 2, step: 0.05 },
+  },
+  leads: {
+    minClicksNoConversion: { label: 'Cliques sem conversao para alertar', unit: 'cliques', min: 20, max: 200, step: 10 },
+    cplAboveAvgMultiplier: { label: 'CPL acima da media para cortar', unit: 'x', min: 1.5, max: 5, step: 0.5 },
+    cplBelowAvgPercent: { label: 'CPL abaixo da media para escalar', unit: '%', min: 30, max: 80, step: 5 },
+    scaleMultiplier: { label: 'Multiplicador de escala', unit: 'x', min: 1.05, max: 2, step: 0.05 },
+  },
+  sales: {
+    roasDropRetargetPercent: { label: 'Queda ROAS para retargeting', unit: '%', min: 10, max: 50, step: 5 },
+    minRoasToScale: { label: 'ROAS minimo para escalar', unit: 'x', min: 2, max: 8, step: 0.5 },
+    maxSpendNoRevenue: { label: 'Gasto max sem receita', unit: 'R$', min: 30, max: 300, step: 10 },
+  },
+  traffic: {
+    minCtrAlert: { label: 'CTR minimo (abaixo alerta)', unit: '%', min: 0.1, max: 2, step: 0.1 },
+    spendRisePercent: { label: 'Subida de spend para cortar', unit: '%', min: 10, max: 50, step: 5 },
+    ctrDropPercent: { label: 'Queda CTR para cortar', unit: '%', min: 10, max: 50, step: 5 },
+    ctrAboveAvgMultiplier: { label: 'CTR acima da media (benchmark)', unit: 'x', min: 1.2, max: 3, step: 0.1 },
+  },
+  registration: {
+    minCtrFormAlert: { label: 'CTR minimo sem cadastro', unit: '%', min: 1, max: 5, step: 0.5 },
+    cpaRisePercent: { label: 'Subida CPA para cortar', unit: '%', min: 20, max: 80, step: 5 },
+    cprBelowAvgPercent: { label: 'CPR abaixo da media para escalar', unit: '%', min: 30, max: 80, step: 5 },
+  },
+  apps: {
+    maxSpendNoInstall: { label: 'Gasto max sem instalacao', unit: 'R$', min: 20, max: 200, step: 10 },
+    cpiAboveAvgMultiplier: { label: 'CPI acima da media para cortar', unit: 'x', min: 1.5, max: 5, step: 0.5 },
+    cpiBelowAvgPercent: { label: 'CPI abaixo da media para escalar', unit: '%', min: 20, max: 80, step: 5 },
+    scaleMultiplier: { label: 'Multiplicador de escala', unit: 'x', min: 1.1, max: 2, step: 0.05 },
+  },
+  awareness: {
+    cpmAboveAvgMultiplier: { label: 'CPM acima da media para alertar', unit: 'x', min: 1.5, max: 5, step: 0.5 },
+    cpmBelowAvgPercent: { label: 'CPM abaixo da media para escalar', unit: '%', min: 20, max: 80, step: 5 },
+    minReachToScale: { label: 'Alcance minimo para escalar', unit: 'pessoas', min: 200, max: 5000, step: 100 },
+    maxSpendLowReach: { label: 'Gasto max com alcance baixo', unit: 'R$', min: 20, max: 200, step: 10 },
+  },
+  engagement: {
+    minImpressionsNoClicks: { label: 'Impressoes sem clique para alertar', unit: 'imp', min: 500, max: 5000, step: 250 },
+    maxClicksForAlert: { label: 'Max cliques (abaixo = alerta)', unit: 'cliques', min: 2, max: 20, step: 1 },
+    ctrDropPercent: { label: 'Queda CTR para fadiga', unit: '%', min: 10, max: 60, step: 5 },
+    ctrAboveAvgMultiplier: { label: 'CTR acima da media para escalar', unit: 'x', min: 1.2, max: 3, step: 0.1 },
+  },
+  funnel: {
+    minClicksNoConversion: { label: 'Cliques sem conversao (funil)', unit: 'cliques', min: 10, max: 100, step: 5 },
+    cpaRisePercent: { label: 'Subida CPA para cortar', unit: '%', min: 20, max: 100, step: 10 },
+    minConvRateToScale: { label: 'Taxa de conversao min para escalar', unit: '%', min: 1, max: 10, step: 0.5 },
+  },
+  copy: {
+    ctrBelowAvgPercent: { label: 'CTR abaixo da media para alertar', unit: '%', min: 20, max: 80, step: 5 },
+    ctrDropPercent: { label: 'Queda CTR para fadiga de copy', unit: '%', min: 15, max: 60, step: 5 },
+    minDaysCopyFatigue: { label: 'Dias para detectar fadiga', unit: 'dias', min: 3, max: 14, step: 1 },
+  },
+}
 
 export default function Agents() {
   const { companies, selectedCompanyId, messages } = useApp()
@@ -67,6 +149,11 @@ export default function Agents() {
   const [expandedTask, setExpandedTask] = useState<string | null>(null)
   const [journeySteps, setJourneySteps] = useState<Record<string, JourneyStep[]>>({})
   const [loadingJourney, setLoadingJourney] = useState<string | null>(null)
+  const [agentConfigs, setAgentConfigs] = useState<AgentConfig[]>([])
+  const [loadingConfigs, setLoadingConfigs] = useState(false)
+  const [editedConfigs, setEditedConfigs] = useState<Record<string, { thresholds: AgentThresholds; enabled: boolean }>>({})
+  const [savingConfig, setSavingConfig] = useState<string | null>(null)
+  const [expandedAgent, setExpandedAgent] = useState<string | null>(null)
 
   const filteredCompanies = selectedCompanyId
     ? companies.filter(c => c.id === selectedCompanyId)
@@ -94,9 +181,32 @@ export default function Agents() {
     }
   }, [selectedCompanyId])
 
+  const loadConfigs = useCallback(async () => {
+    if (!selectedCompanyId) return
+    setLoadingConfigs(true)
+    try {
+      const data = await fetchAgentConfigs(selectedCompanyId)
+      setAgentConfigs(data)
+      const edited: Record<string, { thresholds: AgentThresholds; enabled: boolean }> = {}
+      for (const role of Object.keys(DEFAULT_AGENT_CONFIGS)) {
+        const saved = data.find(c => c.agentRole === role)
+        edited[role] = {
+          thresholds: { ...DEFAULT_AGENT_CONFIGS[role], ...(saved?.config || {}) },
+          enabled: saved?.enabled ?? true,
+        }
+      }
+      setEditedConfigs(edited)
+    } catch (err) {
+      console.error('Erro ao carregar configs:', err)
+    } finally {
+      setLoadingConfigs(false)
+    }
+  }, [selectedCompanyId])
+
   useEffect(() => {
     if (activeTab === 'tasks') loadTasks()
-  }, [activeTab, loadTasks])
+    if (activeTab === 'config') loadConfigs()
+  }, [activeTab, loadTasks, loadConfigs])
 
   const toggleJourney = async (taskId: string) => {
     if (expandedTask === taskId) {
@@ -122,6 +232,41 @@ export default function Agents() {
   const totalDecisionsRejected = tasks.reduce((s, t) => s + t.decisionsRejected, 0)
   const completedTasks = tasks.filter(t => t.status === 'completed').length
   const failedTasks = tasks.filter(t => t.status === 'failed').length
+
+  const saveAgentConfig = async (role: string) => {
+    if (!selectedCompanyId) return
+    const cfg = editedConfigs[role]
+    if (!cfg) return
+    setSavingConfig(role)
+    try {
+      await upsertAgentConfig(selectedCompanyId, role, cfg.thresholds, cfg.enabled)
+      await loadConfigs()
+    } catch (err) {
+      console.error('Erro ao salvar config:', err)
+    } finally {
+      setSavingConfig(null)
+    }
+  }
+
+  const resetAgentConfig = (role: string) => {
+    setEditedConfigs(prev => ({
+      ...prev,
+      [role]: { thresholds: { ...DEFAULT_AGENT_CONFIGS[role] }, enabled: true },
+    }))
+  }
+
+  const initAllConfigs = async () => {
+    if (!selectedCompanyId) return
+    setLoadingConfigs(true)
+    try {
+      await createDefaultAgentConfigs(selectedCompanyId)
+      await loadConfigs()
+    } catch (err) {
+      console.error('Erro ao inicializar configs:', err)
+    } finally {
+      setLoadingConfigs(false)
+    }
+  }
 
   const companyNameMap = new Map(companies.map(c => [c.id, c.name]))
 
@@ -166,6 +311,14 @@ export default function Agents() {
           }`}
         >
           Historico de Tarefas ({tasks.length})
+        </button>
+        <button
+          onClick={() => setActiveTab('config')}
+          className={`px-4 py-2 text-sm font-medium rounded-lg transition-colors ${
+            activeTab === 'config' ? 'bg-white text-gray-900 shadow-sm' : 'text-gray-500 hover:text-gray-700'
+          }`}
+        >
+          <span className="flex items-center gap-1.5"><Settings size={14} /> Configuracao</span>
         </button>
       </div>
 
@@ -389,6 +542,159 @@ export default function Agents() {
               </div>
             )
           })}
+        </div>
+      )}
+
+      {activeTab === 'config' && (
+        <div className="space-y-4">
+          {!selectedCompanyId && (
+            <div className="bg-yellow-50 border border-yellow-200 rounded-2xl p-5 text-center">
+              <p className="text-sm text-yellow-700">Selecione uma empresa no topo para configurar os agentes.</p>
+            </div>
+          )}
+
+          {selectedCompanyId && loadingConfigs && (
+            <div className="bg-white rounded-2xl p-12 shadow-sm border border-gray-100 text-center">
+              <Loader2 size={32} className="mx-auto text-gray-300 animate-spin mb-3" />
+              <p className="text-sm text-gray-500">Carregando configuracoes...</p>
+            </div>
+          )}
+
+          {selectedCompanyId && !loadingConfigs && agentConfigs.length === 0 && (
+            <div className="bg-white rounded-2xl p-8 shadow-sm border border-gray-100 text-center">
+              <Settings size={32} className="mx-auto text-gray-300 mb-3" />
+              <p className="text-sm text-gray-500 mb-3">Nenhuma configuracao personalizada para esta empresa.</p>
+              <button
+                onClick={initAllConfigs}
+                className="bg-blue-600 text-white px-5 py-2.5 rounded-xl text-sm font-medium hover:bg-blue-700 transition-colors"
+              >
+                Inicializar Configuracoes Padrao
+              </button>
+            </div>
+          )}
+
+          {selectedCompanyId && !loadingConfigs && Object.keys(editedConfigs).length > 0 && (
+            <>
+              <div className="flex items-center justify-between">
+                <p className="text-sm text-gray-500">Ajuste os thresholds de cada agente. Alteracoes sao salvas individualmente.</p>
+              </div>
+
+              {Object.entries(THRESHOLD_LABELS).map(([role, fields]) => {
+                const agentRole = AGENT_ROLES[role as AgentRole]
+                if (!agentRole) return null
+                const Icon = iconMap[agentRole.icon] || Users
+                const cfg = editedConfigs[role]
+                if (!cfg) return null
+                const isExpanded = expandedAgent === role
+                const isSaving = savingConfig === role
+                const savedCfg = agentConfigs.find(c => c.agentRole === role)
+                const hasChanges = JSON.stringify(cfg.thresholds) !== JSON.stringify({ ...DEFAULT_AGENT_CONFIGS[role], ...(savedCfg?.config || {}) }) || cfg.enabled !== (savedCfg?.enabled ?? true)
+
+                return (
+                  <div key={role} className="bg-white rounded-2xl shadow-sm border border-gray-100 overflow-hidden">
+                    <button
+                      onClick={() => setExpandedAgent(isExpanded ? null : role)}
+                      className="w-full p-5 text-left hover:bg-gray-50/50 transition-colors"
+                    >
+                      <div className="flex items-center gap-4">
+                        <div className={`p-2.5 rounded-xl ${agentRole.color} text-white`}>
+                          <Icon size={20} />
+                        </div>
+                        <div className="flex-1 min-w-0">
+                          <div className="flex items-center gap-2">
+                            <h3 className="font-semibold text-gray-900">{agentRole.name}</h3>
+                            <span className={`text-xs font-medium px-2 py-0.5 rounded-full ${cfg.enabled ? 'bg-green-50 text-green-700' : 'bg-red-50 text-red-700'}`}>
+                              {cfg.enabled ? 'Ativo' : 'Desativado'}
+                            </span>
+                            {hasChanges && <span className="text-xs font-medium px-2 py-0.5 rounded-full bg-amber-50 text-amber-700">Alterado</span>}
+                          </div>
+                          <p className="text-xs text-gray-500 mt-0.5">{agentRole.description}</p>
+                        </div>
+                        <div className="flex items-center gap-2">
+                          <span className="text-xs text-gray-400">{Object.keys(fields).length} parametros</span>
+                          {isExpanded ? <ChevronDown size={16} className="text-gray-400" /> : <ChevronRight size={16} className="text-gray-400" />}
+                        </div>
+                      </div>
+                    </button>
+
+                    {isExpanded && (
+                      <div className="border-t border-gray-100 p-5 space-y-5">
+                        <div className="flex items-center justify-between">
+                          <label className="flex items-center gap-2 cursor-pointer">
+                            <input
+                              type="checkbox"
+                              checked={cfg.enabled}
+                              onChange={e => setEditedConfigs(prev => ({
+                                ...prev,
+                                [role]: { ...prev[role], enabled: e.target.checked },
+                              }))}
+                              className="w-4 h-4 rounded border-gray-300 text-blue-600 focus:ring-blue-500"
+                            />
+                            <span className="text-sm font-medium text-gray-700">Agente ativo</span>
+                          </label>
+                          <div className="flex items-center gap-2">
+                            <button
+                              onClick={() => resetAgentConfig(role)}
+                              className="flex items-center gap-1.5 text-xs text-gray-500 hover:text-gray-700 px-3 py-1.5 rounded-lg bg-gray-50 hover:bg-gray-100 transition-colors"
+                            >
+                              <RotateCcw size={12} /> Restaurar Padrao
+                            </button>
+                            <button
+                              onClick={() => saveAgentConfig(role)}
+                              disabled={isSaving}
+                              className="flex items-center gap-1.5 text-xs text-white bg-blue-600 hover:bg-blue-700 disabled:opacity-50 px-3 py-1.5 rounded-lg transition-colors"
+                            >
+                              {isSaving ? <Loader2 size={12} className="animate-spin" /> : <Save size={12} />}
+                              Salvar
+                            </button>
+                          </div>
+                        </div>
+
+                        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                          {Object.entries(fields).map(([key, meta]) => {
+                            const value = cfg.thresholds[key] ?? DEFAULT_AGENT_CONFIGS[role]?.[key] ?? 0
+                            const defaultVal = DEFAULT_AGENT_CONFIGS[role]?.[key] ?? 0
+                            const isModified = value !== defaultVal
+
+                            return (
+                              <div key={key} className="space-y-1.5">
+                                <div className="flex items-center justify-between">
+                                  <label className="text-xs font-medium text-gray-600">{meta.label}</label>
+                                  <div className="flex items-center gap-1.5">
+                                    {isModified && <span className="text-xs text-amber-500">padrao: {defaultVal}{meta.unit}</span>}
+                                    <span className="text-sm font-bold text-gray-900 min-w-[60px] text-right">{value}{meta.unit}</span>
+                                  </div>
+                                </div>
+                                <input
+                                  type="range"
+                                  min={meta.min}
+                                  max={meta.max}
+                                  step={meta.step}
+                                  value={value}
+                                  onChange={e => setEditedConfigs(prev => ({
+                                    ...prev,
+                                    [role]: {
+                                      ...prev[role],
+                                      thresholds: { ...prev[role].thresholds, [key]: Number(e.target.value) },
+                                    },
+                                  }))}
+                                  className="w-full h-1.5 bg-gray-200 rounded-lg appearance-none cursor-pointer accent-blue-600"
+                                />
+                                <div className="flex justify-between text-xs text-gray-400">
+                                  <span>{meta.min}{meta.unit}</span>
+                                  <span>{meta.max}{meta.unit}</span>
+                                </div>
+                              </div>
+                            )
+                          })}
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                )
+              })}
+            </>
+          )}
         </div>
       )}
     </div>

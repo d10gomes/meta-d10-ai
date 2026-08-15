@@ -189,6 +189,154 @@ export async function createDefaultPolicies(companyId: string) {
   if (error) throw error
 }
 
+// ==================== AGENT CONFIGS ====================
+
+export interface AgentThresholds {
+  [key: string]: number
+}
+
+export interface AgentConfig {
+  id: string
+  companyId: string
+  agentRole: string
+  config: AgentThresholds
+  enabled: boolean
+  updatedAt: string
+}
+
+export const DEFAULT_AGENT_CONFIGS: Record<string, AgentThresholds> = {
+  budget: {
+    minRoasToScale: 3,
+    scaleMultiplier: 1.2,
+    maxRoasToCut: 0.8,
+    cutMultiplier: 0.7,
+    cpaMultiplierThreshold: 3,
+    cpaCutMultiplier: 0.5,
+  },
+  analytics: {
+    ctrDropAlertPercent: 40,
+    cpaRiseAlertPercent: 50,
+    maxSpendNoConversions: 100,
+    minDaysNoConversions: 5,
+    roasDropCutPercent: 50,
+  },
+  audience: {
+    frequencyAlertThreshold: 4,
+    frequencyPauseThreshold: 6,
+    minCtrToPause: 1,
+  },
+  creative: {
+    ctrBelowAvgPercent: 50,
+    cpcAboveAvgMultiplier: 3,
+  },
+  orchestrator: {
+    minDaysNoImpressions: 3,
+    minRoasToScale: 5,
+    scaleMultiplier: 1.3,
+  },
+  leads: {
+    minClicksNoConversion: 50,
+    cplAboveAvgMultiplier: 2.5,
+    cplBelowAvgPercent: 60,
+    scaleMultiplier: 1.25,
+  },
+  sales: {
+    roasDropRetargetPercent: 20,
+    minRoasToScale: 4,
+    maxSpendNoRevenue: 80,
+  },
+  traffic: {
+    minCtrAlert: 0.5,
+    spendRisePercent: 20,
+    ctrDropPercent: 25,
+    ctrAboveAvgMultiplier: 1.8,
+  },
+  registration: {
+    minCtrFormAlert: 2,
+    cpaRisePercent: 40,
+    cprBelowAvgPercent: 70,
+  },
+  apps: {
+    maxSpendNoInstall: 60,
+    cpiAboveAvgMultiplier: 2,
+    cpiBelowAvgPercent: 50,
+    scaleMultiplier: 1.3,
+  },
+  awareness: {
+    cpmAboveAvgMultiplier: 2.5,
+    cpmBelowAvgPercent: 50,
+    minReachToScale: 1000,
+    maxSpendLowReach: 50,
+  },
+  engagement: {
+    minImpressionsNoClicks: 2000,
+    maxClicksForAlert: 5,
+    ctrDropPercent: 30,
+    ctrAboveAvgMultiplier: 2,
+  },
+  funnel: {
+    minClicksNoConversion: 40,
+    cpaRisePercent: 60,
+    minConvRateToScale: 3,
+  },
+  copy: {
+    ctrBelowAvgPercent: 40,
+    ctrDropPercent: 35,
+    minDaysCopyFatigue: 7,
+  },
+}
+
+export async function fetchAgentConfigs(companyId: string): Promise<AgentConfig[]> {
+  const { data, error } = await supabase
+    .from('agent_configs')
+    .select('*')
+    .eq('company_id', companyId)
+
+  if (error) throw error
+  return (data || []).map((r: Record<string, unknown>) => ({
+    id: r.id as string,
+    companyId: r.company_id as string,
+    agentRole: r.agent_role as string,
+    config: r.config as AgentThresholds,
+    enabled: r.enabled as boolean,
+    updatedAt: r.updated_at as string,
+  }))
+}
+
+export async function upsertAgentConfig(companyId: string, agentRole: string, config: AgentThresholds, enabled: boolean) {
+  const { error } = await supabase
+    .from('agent_configs')
+    .upsert({
+      company_id: companyId,
+      agent_role: agentRole,
+      config,
+      enabled,
+      updated_at: new Date().toISOString(),
+    }, { onConflict: 'company_id,agent_role' })
+  if (error) throw error
+}
+
+export async function createDefaultAgentConfigs(companyId: string) {
+  const inserts = Object.entries(DEFAULT_AGENT_CONFIGS).map(([role, config]) => ({
+    company_id: companyId,
+    agent_role: role,
+    config,
+    enabled: true,
+    updated_at: new Date().toISOString(),
+  }))
+  const { error } = await supabase.from('agent_configs').upsert(inserts, { onConflict: 'company_id,agent_role' })
+  if (error) throw error
+}
+
+export function getAgentConfigWithDefaults(configs: AgentConfig[], agentRole: string): { thresholds: AgentThresholds; enabled: boolean } {
+  const saved = configs.find(c => c.agentRole === agentRole)
+  const defaults = DEFAULT_AGENT_CONFIGS[agentRole] || {}
+  return {
+    thresholds: { ...defaults, ...(saved?.config || {}) },
+    enabled: saved?.enabled ?? true,
+  }
+}
+
 // ==================== CAMPAIGNS ====================
 
 export async function fetchCampaigns(companyId?: string) {

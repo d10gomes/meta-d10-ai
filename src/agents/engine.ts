@@ -10,6 +10,7 @@ import type { ActionType } from '../types/agent'
 import {
   type CampaignData,
   type AgentDecision,
+  type AnalyzerContext,
   analyzeBudget,
   analyzePerformance,
   analyzeAudience,
@@ -26,6 +27,7 @@ import {
   analyzeCopy,
   deduplicateDecisions,
 } from './analyzers'
+import type { AgentThresholds } from '../lib/supabase-data'
 
 interface AutomationRule {
   id: string
@@ -139,8 +141,9 @@ export class AgentEngine {
 
         // 2. Analyzers autonomos
         const ctx = this.buildContext(campaigns)
+        const agentConfigs = await db.fetchAgentConfigs(company.id)
 
-        const analyzerRuns = [
+        const analyzerRuns: Array<{ id: string; role: string; fn: (ctx: AnalyzerContext, cfg?: AgentThresholds) => AgentDecision[] }> = [
           { id: 'analyzeBudget', role: 'budget', fn: analyzeBudget },
           { id: 'analyzePerformance', role: 'analytics', fn: analyzePerformance },
           { id: 'analyzeAudience', role: 'audience', fn: analyzeAudience },
@@ -159,8 +162,10 @@ export class AgentEngine {
 
         const rawDecisions: AgentDecision[] = []
         for (const analyzer of analyzerRuns) {
+          const { thresholds, enabled } = db.getAgentConfigWithDefaults(agentConfigs, analyzer.role)
+          if (!enabled) continue
           const t0 = Date.now()
-          const decisions = analyzer.fn(ctx)
+          const decisions = analyzer.fn(ctx, thresholds)
           rawDecisions.push(...decisions)
           await journeyLog.logSkillExecuted(taskId, company.id, analyzer.id, analyzer.role, decisions.length, Date.now() - t0)
         }

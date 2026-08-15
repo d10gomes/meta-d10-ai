@@ -1,7 +1,7 @@
 import { useState, useEffect, useCallback } from 'react'
 import { Key, Shield, CheckCircle, AlertCircle, Loader2, RefreshCw, Rocket, Save } from 'lucide-react'
 import { useApp } from '../contexts/AppContext'
-import { fetchMetaConfig, saveMetaConfig, createCompany, createDefaultAgents, createDefaultPolicies, type MetaConfig } from '../lib/supabase-data'
+import { fetchMetaConfig, saveMetaConfig, createCompany, createDefaultAgents, createDefaultPolicies, createDefaultAgentConfigs, type MetaConfig } from '../lib/supabase-data'
 import { fetchPolicies, updatePolicy, type Policy, type AutonomyLevel } from '../lib/permission-engine'
 import { validateAccessToken, getAdAccounts, syncCampaignsToSupabase } from '../lib/meta-api'
 
@@ -175,6 +175,10 @@ export default function Settings() {
           addLog(`Criando policies padrao para ${accountName}...`)
           await createDefaultPolicies(companyId)
           addLog(`Policies criadas!`)
+
+          addLog(`Criando configuracoes dos agentes...`)
+          await createDefaultAgentConfigs(companyId)
+          addLog(`Configuracoes dos 14 agentes criadas!`)
         }
 
         addLog(`Salvando configuracao Meta para ${accountName}...`)
