@@ -176,6 +176,19 @@ export async function createDefaultAgents(companyId: string) {
   if (error) throw error
 }
 
+export async function createDefaultPolicies(companyId: string) {
+  const policies = [
+    { company_id: companyId, capability_id: 'pause_ad', autonomy_level: 'limited', max_value: null, cooldown_minutes: 60, min_confidence: 0.6 },
+    { company_id: companyId, capability_id: 'activate_ad', autonomy_level: 'approval', max_value: null, cooldown_minutes: 60, min_confidence: 0.7 },
+    { company_id: companyId, capability_id: 'adjust_budget', autonomy_level: 'limited', max_value: 50, cooldown_minutes: 60, min_confidence: 0.7 },
+    { company_id: companyId, capability_id: 'scale_campaign', autonomy_level: 'limited', max_value: 50, cooldown_minutes: 120, min_confidence: 0.8 },
+    { company_id: companyId, capability_id: 'kill_campaign', autonomy_level: 'approval', max_value: null, cooldown_minutes: 180, min_confidence: 0.9 },
+    { company_id: companyId, capability_id: 'send_alert', autonomy_level: 'auto', max_value: null, cooldown_minutes: 5, min_confidence: 0.3 },
+  ]
+  const { error } = await supabase.from('policies').upsert(policies, { onConflict: 'company_id,capability_id' })
+  if (error) throw error
+}
+
 // ==================== CAMPAIGNS ====================
 
 export async function fetchCampaigns(companyId?: string) {

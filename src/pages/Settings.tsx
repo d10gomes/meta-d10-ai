@@ -1,17 +1,9 @@
 import { useState, useEffect, useCallback } from 'react'
 import { Key, Shield, CheckCircle, AlertCircle, Loader2, RefreshCw, Rocket, Save } from 'lucide-react'
 import { useApp } from '../contexts/AppContext'
-import { fetchMetaConfig, saveMetaConfig, createCompany, type MetaConfig } from '../lib/supabase-data'
+import { fetchMetaConfig, saveMetaConfig, createCompany, createDefaultAgents, createDefaultPolicies, type MetaConfig } from '../lib/supabase-data'
 import { fetchPolicies, updatePolicy, type Policy, type AutonomyLevel } from '../lib/permission-engine'
 import { validateAccessToken, getAdAccounts, syncCampaignsToSupabase } from '../lib/meta-api'
-import { supabase } from '../lib/supabase'
-import type { AgentRole } from '../types/company'
-
-const defaultAgentRoles: AgentRole[] = [
-  'orchestrator', 'leads', 'sales', 'traffic', 'registration',
-  'apps', 'awareness', 'engagement', 'funnel',
-  'creative', 'audience', 'budget', 'copy', 'analytics',
-]
 
 const capabilityLabels: Record<string, { name: string; desc: string }> = {
   pause_ad: { name: 'Pausar Campanha', desc: 'Pausar campanhas com performance ruim' },
@@ -177,26 +169,11 @@ export default function Settings() {
           addLog(`Empresa "${accountName}" criada!`)
 
           addLog(`Criando 14 agentes IA para ${accountName}...`)
-          const agentInserts = defaultAgentRoles.map(role => ({
-            company_id: companyId,
-            role,
-            status: 'idle',
-            performance_score: 0,
-            actions_today: 0,
-          }))
-          await supabase.from('agents').insert(agentInserts)
+          await createDefaultAgents(companyId)
           addLog(`14 agentes criados!`)
 
           addLog(`Criando policies padrao para ${accountName}...`)
-          const defaultPolicies = [
-            { company_id: companyId, capability_id: 'pause_ad', autonomy_level: 'limited', max_value: null, cooldown_minutes: 60, min_confidence: 0.6 },
-            { company_id: companyId, capability_id: 'activate_ad', autonomy_level: 'approval', max_value: null, cooldown_minutes: 60, min_confidence: 0.7 },
-            { company_id: companyId, capability_id: 'adjust_budget', autonomy_level: 'limited', max_value: 50, cooldown_minutes: 60, min_confidence: 0.7 },
-            { company_id: companyId, capability_id: 'scale_campaign', autonomy_level: 'limited', max_value: 50, cooldown_minutes: 120, min_confidence: 0.8 },
-            { company_id: companyId, capability_id: 'kill_campaign', autonomy_level: 'approval', max_value: null, cooldown_minutes: 180, min_confidence: 0.9 },
-            { company_id: companyId, capability_id: 'send_alert', autonomy_level: 'auto', max_value: null, cooldown_minutes: 5, min_confidence: 0.3 },
-          ]
-          await supabase.from('policies').upsert(defaultPolicies, { onConflict: 'company_id,capability_id' })
+          await createDefaultPolicies(companyId)
           addLog(`Policies criadas!`)
         }
 
