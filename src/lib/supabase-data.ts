@@ -466,6 +466,56 @@ export async function createAction(action: Omit<AgentAction, 'id' | 'timestamp'>
   return mapAction(data)
 }
 
+export interface AgentPerformance {
+  agentRole: string
+  totalActions: number
+  completedActions: number
+  failedActions: number
+  successRate: number
+  totalBudgetImpact: number
+  actionTypes: Record<string, number>
+}
+
+export async function fetchAgentPerformance(companyId?: string): Promise<AgentPerformance[]> {
+  let query = supabase
+    .from('agent_actions')
+    .select('*')
+    .order('created_at', { ascending: false })
+    .limit(500)
+
+  if (companyId) query = query.eq('company_id', companyId)
+
+  const { data, error } = await query
+  if (error) throw error
+  if (!data || data.length === 0) return []
+
+  const byAgent = new Map<string, { total: number; completed: number; failed: number; budgetImpact: number; types: Record<string, number> }>()
+
+  for (const row of data) {
+    const role = row.agent_role as string
+    const entry = byAgent.get(role) || { total: 0, completed: 0, failed: 0, budgetImpact: 0, types: {} }
+    entry.total++
+    if (row.status === 'completed') entry.completed++
+    if (row.status === 'failed') entry.failed++
+    if (row.impact_metric === 'budget' && row.impact_after != null && row.impact_before != null) {
+      entry.budgetImpact += (row.impact_after as number) - (row.impact_before as number)
+    }
+    const actionType = row.action_type as string
+    entry.types[actionType] = (entry.types[actionType] || 0) + 1
+    byAgent.set(role, entry)
+  }
+
+  return Array.from(byAgent.entries()).map(([role, stats]) => ({
+    agentRole: role,
+    totalActions: stats.total,
+    completedActions: stats.completed,
+    failedActions: stats.failed,
+    successRate: stats.total > 0 ? Math.round((stats.completed / stats.total) * 100) : 0,
+    totalBudgetImpact: Math.round(stats.budgetImpact * 100) / 100,
+    actionTypes: stats.types,
+  })).sort((a, b) => b.totalActions - a.totalActions)
+}
+
 // ==================== AGENT MEMORIES ====================
 
 export async function fetchMemories(role?: string): Promise<AgentMemory[]> {

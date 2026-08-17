@@ -2,7 +2,7 @@ import { useState, useEffect, useCallback } from 'react'
 import { Crown, MessageCircle, ShoppingCart, ExternalLink, UserPlus, Smartphone, Eye, Heart, Filter, Palette, Users, DollarSign, PenTool, BarChart3, ArrowRight, Clock, CheckCircle, XCircle, AlertTriangle, ChevronDown, ChevronRight, Zap, Play, Loader2, RefreshCw, Settings, Save, RotateCcw } from 'lucide-react'
 import { useApp } from '../contexts/AppContext'
 import { AGENT_ROLES, type AgentRole } from '../types/company'
-import { fetchRecentTasks, journeyLog, fetchAgentConfigs, upsertAgentConfig, createDefaultAgentConfigs, DEFAULT_AGENT_CONFIGS, type Task, type AgentConfig, type AgentThresholds } from '../lib/supabase-data'
+import { fetchRecentTasks, journeyLog, fetchAgentConfigs, upsertAgentConfig, createDefaultAgentConfigs, fetchAgentPerformance, DEFAULT_AGENT_CONFIGS, type Task, type AgentConfig, type AgentThresholds, type AgentPerformance } from '../lib/supabase-data'
 
 const iconMap: Record<string, React.ElementType> = {
   Crown, MessageCircle, ShoppingCart, ExternalLink, UserPlus, Smartphone,
@@ -57,7 +57,7 @@ interface JourneyStep {
   created_at: string
 }
 
-type ViewTab = 'agents' | 'tasks' | 'config'
+type ViewTab = 'agents' | 'tasks' | 'config' | 'performance'
 
 const THRESHOLD_LABELS: Record<string, Record<string, { label: string; unit: string; min: number; max: number; step: number }>> = {
   budget: {
@@ -154,6 +154,8 @@ export default function Agents() {
   const [editedConfigs, setEditedConfigs] = useState<Record<string, { thresholds: AgentThresholds; enabled: boolean }>>({})
   const [savingConfig, setSavingConfig] = useState<string | null>(null)
   const [expandedAgent, setExpandedAgent] = useState<string | null>(null)
+  const [agentPerformance, setAgentPerformance] = useState<AgentPerformance[]>([])
+  const [loadingPerformance, setLoadingPerformance] = useState(false)
 
   const filteredCompanies = selectedCompanyId
     ? companies.filter(c => c.id === selectedCompanyId)
@@ -203,10 +205,23 @@ export default function Agents() {
     }
   }, [selectedCompanyId])
 
+  const loadPerformance = useCallback(async () => {
+    setLoadingPerformance(true)
+    try {
+      const data = await fetchAgentPerformance(selectedCompanyId || undefined)
+      setAgentPerformance(data)
+    } catch (err) {
+      console.error('Erro ao carregar performance:', err)
+    } finally {
+      setLoadingPerformance(false)
+    }
+  }, [selectedCompanyId])
+
   useEffect(() => {
     if (activeTab === 'tasks') loadTasks()
     if (activeTab === 'config') loadConfigs()
-  }, [activeTab, loadTasks, loadConfigs])
+    if (activeTab === 'performance') loadPerformance()
+  }, [activeTab, loadTasks, loadConfigs, loadPerformance])
 
   const toggleJourney = async (taskId: string) => {
     if (expandedTask === taskId) {
@@ -311,6 +326,14 @@ export default function Agents() {
           }`}
         >
           Historico de Tarefas ({tasks.length})
+        </button>
+        <button
+          onClick={() => setActiveTab('performance')}
+          className={`px-4 py-2 text-sm font-medium rounded-lg transition-colors ${
+            activeTab === 'performance' ? 'bg-white text-gray-900 shadow-sm' : 'text-gray-500 hover:text-gray-700'
+          }`}
+        >
+          Performance
         </button>
         <button
           onClick={() => setActiveTab('config')}
@@ -542,6 +565,138 @@ export default function Agents() {
               </div>
             )
           })}
+        </div>
+      )}
+
+      {activeTab === 'performance' && (
+        <div className="space-y-4">
+          {loadingPerformance && agentPerformance.length === 0 && (
+            <div className="bg-white rounded-2xl p-12 shadow-sm border border-gray-100 text-center">
+              <Loader2 size={32} className="mx-auto text-gray-300 animate-spin mb-3" />
+              <p className="text-sm text-gray-500">Carregando performance...</p>
+            </div>
+          )}
+
+          {!loadingPerformance && agentPerformance.length === 0 && (
+            <div className="bg-white rounded-2xl p-12 shadow-sm border border-gray-100 text-center">
+              <BarChart3 size={32} className="mx-auto text-gray-300 mb-3" />
+              <p className="text-sm text-gray-500">Nenhuma acao registrada ainda.</p>
+              <p className="text-xs text-gray-400 mt-1">Ative o motor de agentes para comecar a ver metricas de performance.</p>
+            </div>
+          )}
+
+          {agentPerformance.length > 0 && (
+            <>
+              <div className="flex items-center justify-between">
+                <p className="text-sm text-gray-500">Performance individual de cada agente baseada nas acoes executadas</p>
+                <button
+                  onClick={loadPerformance}
+                  disabled={loadingPerformance}
+                  className="flex items-center gap-1.5 text-xs text-gray-500 hover:text-gray-700 px-3 py-1.5 rounded-lg bg-gray-50 hover:bg-gray-100 transition-colors"
+                >
+                  <RefreshCw size={12} className={loadingPerformance ? 'animate-spin' : ''} />
+                  Atualizar
+                </button>
+              </div>
+
+              {/* KPIs globais */}
+              <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+                <div className="bg-white rounded-2xl p-5 shadow-sm border border-gray-100">
+                  <p className="text-sm text-gray-500">Total de Acoes</p>
+                  <p className="text-3xl font-bold text-gray-900 mt-1">{agentPerformance.reduce((s, a) => s + a.totalActions, 0)}</p>
+                </div>
+                <div className="bg-white rounded-2xl p-5 shadow-sm border border-gray-100">
+                  <p className="text-sm text-gray-500">Taxa de Sucesso</p>
+                  {(() => {
+                    const total = agentPerformance.reduce((s, a) => s + a.totalActions, 0)
+                    const completed = agentPerformance.reduce((s, a) => s + a.completedActions, 0)
+                    const rate = total > 0 ? Math.round((completed / total) * 100) : 0
+                    return <p className={`text-3xl font-bold mt-1 ${rate >= 80 ? 'text-green-600' : rate >= 50 ? 'text-yellow-600' : 'text-red-600'}`}>{rate}%</p>
+                  })()}
+                </div>
+                <div className="bg-white rounded-2xl p-5 shadow-sm border border-gray-100">
+                  <p className="text-sm text-gray-500">Agentes Ativos</p>
+                  <p className="text-3xl font-bold text-blue-600 mt-1">{agentPerformance.length}</p>
+                </div>
+                <div className="bg-white rounded-2xl p-5 shadow-sm border border-gray-100">
+                  <p className="text-sm text-gray-500">Impacto no Budget</p>
+                  {(() => {
+                    const impact = agentPerformance.reduce((s, a) => s + a.totalBudgetImpact, 0)
+                    return <p className={`text-3xl font-bold mt-1 ${impact >= 0 ? 'text-green-600' : 'text-red-600'}`}>R$ {impact.toLocaleString('pt-BR')}</p>
+                  })()}
+                </div>
+              </div>
+
+              {/* Ranking de agentes */}
+              <div className="bg-white rounded-2xl shadow-sm border border-gray-100 overflow-hidden">
+                <div className="p-5 border-b border-gray-100">
+                  <h3 className="font-semibold text-gray-900">Ranking de Performance</h3>
+                </div>
+                <div className="divide-y divide-gray-50">
+                  {agentPerformance.map((perf, i) => {
+                    const agentRole = AGENT_ROLES[perf.agentRole as AgentRole]
+                    const Icon = agentRole ? (iconMap[agentRole.icon] || Users) : Users
+                    const actionTypeLabels: Record<string, string> = {
+                      pause_ad: 'Pausar', activate_ad: 'Ativar', adjust_budget: 'Ajustar Budget',
+                      scale_campaign: 'Escalar', kill_campaign: 'Encerrar', send_alert: 'Alertar',
+                    }
+
+                    return (
+                      <div key={perf.agentRole} className="p-5 flex items-center gap-4">
+                        <div className="flex items-center justify-center w-8 h-8 rounded-full bg-gray-100 text-sm font-bold text-gray-500 flex-shrink-0">
+                          {i + 1}
+                        </div>
+                        <div className={`p-2 rounded-xl flex-shrink-0 ${agentRole?.color || 'bg-gray-500'} text-white`}>
+                          <Icon size={18} />
+                        </div>
+                        <div className="flex-1 min-w-0">
+                          <div className="flex items-center gap-2">
+                            <h4 className="font-semibold text-gray-900 text-sm">{agentRole?.name || perf.agentRole}</h4>
+                            <span className={`text-xs font-medium px-2 py-0.5 rounded-full ${
+                              perf.successRate >= 90 ? 'bg-green-50 text-green-700' :
+                              perf.successRate >= 70 ? 'bg-yellow-50 text-yellow-700' :
+                              'bg-red-50 text-red-700'
+                            }`}>{perf.successRate}% sucesso</span>
+                          </div>
+                          <div className="flex flex-wrap gap-1.5 mt-1.5">
+                            {Object.entries(perf.actionTypes).map(([type, count]) => (
+                              <span key={type} className="text-xs bg-gray-100 text-gray-600 px-2 py-0.5 rounded-full">
+                                {actionTypeLabels[type] || type}: {count}
+                              </span>
+                            ))}
+                          </div>
+                        </div>
+                        <div className="flex items-center gap-6 flex-shrink-0">
+                          <div className="text-center">
+                            <p className="text-lg font-bold text-gray-900">{perf.totalActions}</p>
+                            <p className="text-xs text-gray-500">acoes</p>
+                          </div>
+                          <div className="text-center">
+                            <p className="text-lg font-bold text-green-600">{perf.completedActions}</p>
+                            <p className="text-xs text-gray-500">sucesso</p>
+                          </div>
+                          {perf.failedActions > 0 && (
+                            <div className="text-center">
+                              <p className="text-lg font-bold text-red-600">{perf.failedActions}</p>
+                              <p className="text-xs text-gray-500">falhas</p>
+                            </div>
+                          )}
+                          {perf.totalBudgetImpact !== 0 && (
+                            <div className="text-center">
+                              <p className={`text-sm font-bold ${perf.totalBudgetImpact >= 0 ? 'text-green-600' : 'text-red-600'}`}>
+                                {perf.totalBudgetImpact >= 0 ? '+' : ''}R${perf.totalBudgetImpact.toLocaleString('pt-BR')}
+                              </p>
+                              <p className="text-xs text-gray-500">budget</p>
+                            </div>
+                          )}
+                        </div>
+                      </div>
+                    )
+                  })}
+                </div>
+              </div>
+            </>
+          )}
         </div>
       )}
 
