@@ -1,6 +1,7 @@
-import { Bell, ChevronDown, LogOut } from 'lucide-react'
+import { Bell, ChevronDown, LogOut, Moon, Sun } from 'lucide-react'
 import { useApp } from '../contexts/AppContext'
 import { useAuth } from '../contexts/AuthContext'
+import { useTheme } from '../hooks/useTheme'
 
 const pageTitles: Record<string, string> = {
   dashboard: 'Dashboard',
@@ -30,6 +31,7 @@ function getInitials(name?: string, email?: string): string {
 export default function Header() {
   const { activePage, companies, selectedCompanyId, setSelectedCompanyId, setActivePage, messages } = useApp()
   const { user, signOut } = useAuth()
+  const { theme, toggleTheme } = useTheme()
   const title = pageTitles[activePage] || ''
   const selectedCompany = companies.find(c => c.id === selectedCompanyId)
   const subtitle = selectedCompany ? selectedCompany.name : 'Todas as empresas'
@@ -62,6 +64,14 @@ export default function Header() {
           </select>
           <ChevronDown size={14} className="absolute right-2.5 top-1/2 -translate-y-1/2 pointer-events-none text-gray-400" />
         </div>
+
+        <button
+          onClick={toggleTheme}
+          className="p-2 text-gray-500 hover:text-gray-700 hover:bg-gray-100 rounded-xl transition-colors"
+          title={theme === 'dark' ? 'Modo claro' : 'Modo escuro'}
+        >
+          {theme === 'dark' ? <Sun size={20} /> : <Moon size={20} />}
+        </button>
 
         <button
           onClick={() => setActivePage('communication')}

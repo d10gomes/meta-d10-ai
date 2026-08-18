@@ -62,7 +62,7 @@ export default function Login() {
           <p className="text-gray-400 mt-2">Gestor de Trafego com Orquestra de Agentes IA</p>
         </div>
 
-        <div className="bg-white rounded-2xl shadow-2xl p-8">
+        <div className="bg-white rounded-2xl shadow-2xl p-8" style={{ backgroundColor: '#ffffff', color: '#111827' }}>
           <h2 className="text-xl font-bold text-gray-900 mb-6">
             {mode === 'login' ? 'Entrar na plataforma' : 'Criar sua conta'}
           </h2>
