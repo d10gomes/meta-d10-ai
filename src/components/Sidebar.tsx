@@ -1,4 +1,4 @@
-import { BarChart3, Target, Megaphone, TrendingUp, Zap, Settings, Brain, DollarSign, Building2, Users, MessageCircle, Filter } from 'lucide-react'
+import { BarChart3, Target, Megaphone, TrendingUp, Zap, Settings, Brain, DollarSign, Building2, Users, MessageCircle, Filter, UsersRound } from 'lucide-react'
 import { useApp } from '../contexts/AppContext'
 
 const menuItems = [
@@ -13,6 +13,7 @@ const menuItems = [
   { id: 'automations', icon: Zap, label: 'Automacoes' },
   { id: 'insights', icon: Brain, label: 'IA Insights' },
   { id: 'communication', icon: MessageCircle, label: 'Central de Msgs' },
+  { id: 'team', icon: UsersRound, label: 'Equipe' },
   { id: 'settings', icon: Settings, label: 'Configuracoes' },
 ]
 

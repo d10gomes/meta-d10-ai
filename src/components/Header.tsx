@@ -15,6 +15,7 @@ const pageTitles: Record<string, string> = {
   automations: 'Automacoes',
   insights: 'IA Insights',
   communication: 'Central de Mensagens',
+  team: 'Equipe',
   settings: 'Configuracoes',
 }
 

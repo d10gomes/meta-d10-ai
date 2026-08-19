@@ -879,3 +879,105 @@ function aggregateMetrics(rows: Record<string, unknown>[]): AdMetrics {
     frequency: totals.reach > 0 ? totals.impressions / totals.reach : 0,
   }
 }
+
+// ==================== USER ROLES ====================
+
+export type UserRole = 'owner' | 'admin' | 'manager' | 'viewer'
+
+export interface UserRoleRecord {
+  id: string
+  userId: string
+  companyId: string
+  role: UserRole
+  invitedBy: string | null
+  createdAt: string
+  userEmail?: string
+  userName?: string
+}
+
+export const ROLE_LABELS: Record<UserRole, string> = {
+  owner: 'Proprietario',
+  admin: 'Administrador',
+  manager: 'Gestor',
+  viewer: 'Visualizador',
+}
+
+export const ROLE_PERMISSIONS: Record<UserRole, string[]> = {
+  owner: ['view', 'edit', 'create', 'delete', 'manage_agents', 'manage_configs', 'manage_users', 'manage_company'],
+  admin: ['view', 'edit', 'create', 'delete', 'manage_agents', 'manage_configs', 'manage_users'],
+  manager: ['view', 'edit', 'create', 'manage_agents', 'manage_configs'],
+  viewer: ['view'],
+}
+
+export async function fetchUserRoles(companyId: string): Promise<UserRoleRecord[]> {
+  const { data, error } = await supabase
+    .from('user_roles')
+    .select('*')
+    .eq('company_id', companyId)
+    .order('created_at', { ascending: true })
+
+  if (error) throw error
+  return (data || []).map((r: Record<string, unknown>) => ({
+    id: r.id as string,
+    userId: r.user_id as string,
+    companyId: r.company_id as string,
+    role: r.role as UserRole,
+    invitedBy: r.invited_by as string | null,
+    createdAt: r.created_at as string,
+  }))
+}
+
+export async function fetchMyRoles(userId: string): Promise<UserRoleRecord[]> {
+  const { data, error } = await supabase
+    .from('user_roles')
+    .select('*')
+    .eq('user_id', userId)
+
+  if (error) throw error
+  return (data || []).map((r: Record<string, unknown>) => ({
+    id: r.id as string,
+    userId: r.user_id as string,
+    companyId: r.company_id as string,
+    role: r.role as UserRole,
+    invitedBy: r.invited_by as string | null,
+    createdAt: r.created_at as string,
+  }))
+}
+
+export async function assignUserRole(userId: string, companyId: string, role: UserRole, invitedBy?: string) {
+  const { data, error } = await supabase
+    .from('user_roles')
+    .upsert({
+      user_id: userId,
+      company_id: companyId,
+      role,
+      invited_by: invitedBy || null,
+      updated_at: new Date().toISOString(),
+    }, { onConflict: 'user_id,company_id' })
+    .select()
+    .single()
+
+  if (error) throw error
+  return data
+}
+
+export async function removeUserRole(userId: string, companyId: string) {
+  const { error } = await supabase
+    .from('user_roles')
+    .delete()
+    .eq('user_id', userId)
+    .eq('company_id', companyId)
+
+  if (error) throw error
+}
+
+export async function findUserByEmail(email: string): Promise<{ id: string; email: string; name: string } | null> {
+  const { data, error } = await supabase.rpc('find_user_by_email', { target_email: email })
+  if (error || !data || data.length === 0) return null
+  return { id: data[0].id, email: data[0].email, name: data[0].raw_user_meta_data?.full_name || email }
+}
+
+export function hasPermission(role: UserRole | null, permission: string): boolean {
+  if (!role) return false
+  return ROLE_PERMISSIONS[role]?.includes(permission) ?? false
+}

@@ -1,10 +1,12 @@
 import { useState } from 'react'
 import { Plus, TrendingUp, Users, Target, Zap, X, Loader2 } from 'lucide-react'
 import { useApp } from '../contexts/AppContext'
-import { createCompany, createDefaultAgents, createDefaultAgentConfigs } from '../lib/supabase-data'
+import { createCompany, createDefaultAgents, createDefaultAgentConfigs, assignUserRole } from '../lib/supabase-data'
+import { useAuth } from '../contexts/AuthContext'
 
 export default function Companies() {
   const { companies, setSelectedCompanyId, setActivePage, refresh, dataSource } = useApp()
+  const { user } = useAuth()
   const [showForm, setShowForm] = useState(false)
   const [saving, setSaving] = useState(false)
   const [form, setForm] = useState({
@@ -26,6 +28,7 @@ export default function Companies() {
 
       await createDefaultAgents(result.id)
       await createDefaultAgentConfigs(result.id)
+      if (user) await assignUserRole(user.id, result.id, 'owner')
 
       await refresh()
       setShowForm(false)

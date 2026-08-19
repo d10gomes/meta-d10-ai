@@ -16,6 +16,7 @@ import Automations from './pages/Automations'
 import Insights from './pages/Insights'
 import Communication from './pages/Communication'
 import Settings from './pages/Settings'
+import Team from './pages/Team'
 import Login from './pages/Login'
 import { Loader2 } from 'lucide-react'
 
@@ -31,6 +32,7 @@ const pages: Record<string, React.ComponentType> = {
   automations: Automations,
   insights: Insights,
   communication: Communication,
+  team: Team,
   settings: Settings,
 }
 
