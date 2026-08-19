@@ -2,6 +2,7 @@ import { createContext, useContext, useState, useEffect, useCallback, type React
 import type { Company } from '../types/company'
 import type { AgentMessage, AgentAction } from '../types/agent'
 import * as db from '../lib/supabase-data'
+import { supabase } from '../lib/supabase'
 
 interface AppContextType {
   companies: Company[]
@@ -62,6 +63,27 @@ export function AppProvider({ children }: { children: ReactNode }) {
   useEffect(() => {
     loadFromSupabase()
   }, [loadFromSupabase])
+
+  useEffect(() => {
+    const actionsChannel = supabase
+      .channel('app-actions')
+      .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'agent_actions' }, () => {
+        db.fetchActions().then(setActions).catch(console.error)
+      })
+      .subscribe()
+
+    const messagesChannel = supabase
+      .channel('app-messages')
+      .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'agent_messages' }, () => {
+        db.fetchMessages().then(setMessages).catch(console.error)
+      })
+      .subscribe()
+
+    return () => {
+      supabase.removeChannel(actionsChannel)
+      supabase.removeChannel(messagesChannel)
+    }
+  }, [])
 
   const selectedCompany = companies.find((c) => c.id === selectedCompanyId) || null
 

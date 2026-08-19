@@ -2,6 +2,8 @@ import { AuthProvider, useAuth } from './contexts/AuthContext'
 import { AppProvider, useApp } from './contexts/AppContext'
 import Sidebar from './components/Sidebar'
 import Header from './components/Header'
+import NotificationToast from './components/NotificationToast'
+import { useRealtimeNotifications } from './hooks/useRealtimeNotifications'
 import Dashboard from './pages/Dashboard'
 import Companies from './pages/Companies'
 import Campaigns from './pages/Campaigns'
@@ -33,7 +35,8 @@ const pages: Record<string, React.ComponentType> = {
 }
 
 function AppContent() {
-  const { activePage } = useApp()
+  const { activePage, setActivePage } = useApp()
+  const { activeNotifications, dismiss, dismissAll } = useRealtimeNotifications()
   const Page = pages[activePage] || Dashboard
 
   return (
@@ -45,6 +48,12 @@ function AppContent() {
           <Page />
         </main>
       </div>
+      <NotificationToast
+        notifications={activeNotifications}
+        onDismiss={dismiss}
+        onDismissAll={dismissAll}
+        onViewAll={() => { dismissAll(); setActivePage('communication') }}
+      />
     </div>
   )
 }
